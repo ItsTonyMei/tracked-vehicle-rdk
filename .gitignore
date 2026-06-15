@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ROS2
+install/
+log/
+
+# STM32 / PlatformIO
+.pio/
+.vscode/
+*.elf
+*.hex
+
+# Models (large files)
+*.bin
+*.tflite
+*.onnx
+*.hbm
+
+# Environment
+.env
+.env.local
+venv/
+.venv/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+*.log
+**/logs/
+
+# Calibration artifacts
+*.calib_cache
