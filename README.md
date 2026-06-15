@@ -130,6 +130,7 @@ RDK X5 自主指令 (UART)    ▸  遥控器断开时生效
 ## 📁 目录结构
 
 ```
+```
 tracked-vehicle-rdk/
 ├── README.md                         # 项目总览（本文件）
 ├── LICENSE                           # MIT 开源协议
@@ -382,90 +383,3 @@ python3 -m pytest test_vis_parser.py
 <p align="center">
   <b>Built with ❤️ on RDK X5 · ROS2 Humble · TROS</b>
 </p>
-*** Add File: /home/sunrise/Desktop/tracked-vehicle-rdk/.gitignore
-# Python
-__pycache__/
-*.py[cod]
-*.so
-*.egg-info/
-dist/
-build/
-*.egg
-
-# ROS2
-install/
-log/
-
-# STM32 / PlatformIO
-.pio/
-.vscode/
-*.elf
-*.hex
-
-# Models (large files)
-*.bin
-*.tflite
-*.onnx
-*.hbm
-
-# Environment
-.env
-.env.local
-venv/
-.venv/
-
-# IDE
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Debug
-*.log
-**/logs/
-
-# Calibration artifacts
-*.calib_cache
-
-*** Add File: /home/sunrise/Desktop/tracked-vehicle-rdk/LICENSE
-MIT License
-
-Copyright (c) 2026 Tracked Vehicle RDK Contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*** Add File: /home/sunrise/Desktop/tracked-vehicle-rdk/CHANGELOG.md
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-## [0.1.0] - 2026-06-15
-
-### Added
-- Project skeleton: directory structure, README, LICENSE, .gitignore
-- Architecture design: dual-layer (RDK X5 L2 + STM32 L1) with SBUS safety override
-- Documentation placeholders: architecture, hardware setup, protocol spec, migration plan, safety design
-- ROS2 package scaffold: `src/tracked_vehicle/` with module stubs
-
-*** End Patch
