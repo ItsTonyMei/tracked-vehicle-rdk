@@ -2,15 +2,15 @@
 # 规则：最后匹配到的模式生效
 
 # 全局默认审查者（请替换为你的 GitHub 用户名）
-*       @REPLACE_WITH_YOUR_USERNAME
+*       @ItsTonyMei
 
 # 文档类只需一人审查
-README.md       @REPLACE_WITH_YOUR_USERNAME
-docs/           @REPLACE_WITH_YOUR_USERNAME
+README.md       @ItsTonyMei
+docs/           @ItsTonyMei
 
 # STM32 固件需硬件组成员审查
-stm32_firmware/ @REPLACE_WITH_YOUR_USERNAME
+stm32_firmware/ @ItsTonyMei
 
 # ROS2 核心代码需两人审查
-src/tracked_vehicle/tracked_vehicle/   @REPLACE_WITH_YOUR_USERNAME
-launch/                                @REPLACE_WITH_YOUR_USERNAME
+src/tracked_vehicle/tracked_vehicle/   @ItsTonyMei
+launch/                                @ItsTonyMei
