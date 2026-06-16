@@ -6,7 +6,7 @@
  *   2. X5 MotorCmd 解析 (USART1 PA9/PA10, CH340N Micro USB) — 自主跟随
  *   3. 坦克混控 + 双路 ESC PWM (S1=PC3/左, S2=PC2/右)
  *   4. 控制优先级: SBUS(ARMED) > X5 > 60s 超时刹停
- *   5. 蜂鸣器(PC5) + LED(PB5) 状态指示
+ *   5. 蜂鸣器(PC5) + LED(PC13, active-LOW) 状态指示
  *   6. MPU9250 IMU 姿态读取 (SPI1)
  */
 
@@ -103,14 +103,16 @@ static void beepArm()     { beep(60); delay(60); beep(60); }
 static void beepDisarm()  { beep(250); }
 
 // ═══════════════════════════════════════════════════════════════
-// LED — 待确认板载 LED 引脚后启用
-// PB5 为外接 RGB 灯带接口，不是普通 GPIO LED
+// LED (PC13, active-LOW — MCU 红色 LED)
 // ═══════════════════════════════════════════════════════════════
 
-// static void ledInit() {
-//     pinMode(PIN_LED, OUTPUT);
-//     digitalWrite(PIN_LED, LOW);
-// }
+static void ledInit() {
+    pinMode(PIN_LED, OUTPUT);
+    digitalWrite(PIN_LED, LED_ACTIVE_LOW ? HIGH : LOW);  // 默认熄灭
+}
+static void ledSet(bool on) {
+    digitalWrite(PIN_LED, LED_ACTIVE_LOW ? !on : on);
+}
 
 // ═══════════════════════════════════════════════════════════════
 // SBUS 驱动 (USART2 PA3, 100000 baud 8E2, 经三极管反相)
@@ -120,7 +122,6 @@ static HardwareSerial SerialSbus(PIN_SBUS_RX, PA2);
 
 static void sbusInit() {
     SerialSbus.begin(SBUS_BAUD);
-    // SBUS: 8 data + even parity + 2 stop bits
     uint32_t cr1 = USART2->CR1;
     cr1 |= USART_CR1_M;
     cr1 |= USART_CR1_PCE;
@@ -219,7 +220,7 @@ static void x5ParseMotorCmd() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MPU9250 IMU (SPI1, 基础读取)
+// MPU9250 IMU (SPI1)
 // ═══════════════════════════════════════════════════════════════
 
 constexpr uint8_t MPU9250_WHO_AM_I   = 0x75;
@@ -277,7 +278,6 @@ static bool mpu9250Init() {
 static void mpu9250Read() {
     uint8_t buf[14];
     mpu9250ReadBurst(MPU9250_ACCEL_XOUT, buf, 14);
-
     g_imu.accel[0] = (int16_t)((buf[0] << 8) | buf[1]);
     g_imu.accel[1] = (int16_t)((buf[2] << 8) | buf[3]);
     g_imu.accel[2] = (int16_t)((buf[4] << 8) | buf[5]);
@@ -292,8 +292,8 @@ static void mpu9250Read() {
 
 void setup() {
     beepInit();
+    ledInit();
 
-    // 显式指定 Serial 引脚 — genericSTM32F103RC 变体不默认映射 USART1
     Serial.setRx(PA10);
     Serial.setTx(PA9);
     Serial.begin(X5_BAUD);
@@ -353,10 +353,8 @@ void loop() {
     // 5. 控制优先级仲裁
     if (g_escReady) {
         bool sbusActive = g_sbus.valid && !g_sbus.failsafe;
-        bool x5Active   = g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS);
 
         uint16_t thr = PWM_NEUTRAL, str = PWM_NEUTRAL;
-        const char* source = "TIMEOUT";
 
         // SBUS CH5 边沿检测
         bool ch5High = g_sbus.valid && (g_sbus.channels[SBUS_CH_ARM] > SBUS_ARM_THRESHOLD);
@@ -381,20 +379,15 @@ void loop() {
         if (sbusActive && g_motorArmed) {
             thr = sbusToPwm(g_sbus.channels[SBUS_CH_THROTTLE], SBUS_THR_SENSITIVITY);
             str = sbusToPwm(g_sbus.channels[SBUS_CH_STEERING], SBUS_STR_SENSITIVITY);
-            source = "SBUS";
             g_lastCmdMs = now;
 
-        } else if (x5Active) {
-            thr    = g_x5Throttle;
-            str    = g_x5Steering;
-            source = "X5";
+        } else if (g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS)) {
+            thr = g_x5Throttle;
+            str = g_x5Steering;
             g_lastCmdMs = now;
 
-        } else {
-            thr    = PWM_NEUTRAL;
-            str    = PWM_NEUTRAL;
-            source = "TIMEOUT";
         }
+        // else: stay at PWM_NEUTRAL
 
         escSet(thr, str);
         g_throttle = thr;
@@ -409,7 +402,16 @@ void loop() {
         }
     }
 
-    // 6. LED — 待确认板载 LED 引脚后启用
+    // 6. LED 闪烁 (PC13, active-LOW)
+    static uint32_t lastLedMs;
+    static bool     ledOn;
+    bool sbusPresent = g_sbus.valid && !g_sbus.failsafe;
+    uint32_t iv = g_motorArmed ? (sbusPresent ? 100 : 250) : 500;
+    if (now - lastLedMs >= iv) {
+        lastLedMs = now;
+        ledOn = !ledOn;
+        ledSet(ledOn);
+    }
 
     // 7. 状态输出 (5Hz)
     static uint32_t lastStat;
@@ -436,9 +438,10 @@ void loop() {
         int right = t - sOff; if (right < PWM_MIN) right = PWM_MIN; if (right > PWM_MAX) right = PWM_MAX;
 
         bool sbusOk = g_sbus.valid && !g_sbus.failsafe;
+        bool x5Ok   = g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS);
 
         Serial.print(sbusOk ? (g_motorArmed ? "SBUS ARM" : "SBUS LCK") :
-                     g_x5Valid ? "X5      " : "--------");
+                     x5Ok   ? "X5      " : "--------");
         Serial.print(" thr="); Serial.print(g_throttle);
         Serial.print(" st="); Serial.print(g_steering);
         Serial.print(" L="); Serial.print(left);
