@@ -184,10 +184,10 @@ tracked-vehicle-rdk/
 │   ├── person_yolov5s_x5.bin         #   YOLOv5s 人体检测 (Bayes)
 │   └── stereonet_depth_x5.bin        #   双目深度模型
 │
-├── stm32_firmware/                   # 🔩 STM32 扩展板固件
-│   ├── platformio.ini                #   PlatformIO 构建配置
+├── stm32_firmware/                   # 🔩 STM32 扩展板固件 (已实现 ✅)
+│   ├── platformio.ini                #   PlatformIO 构建配置 (STM32F103RCT6)
 │   └── src/
-│       ├── main.cpp                  #   主程序（坦克混控·SBUS·MotorCmd·PWM）
+│       ├── main.cpp                  #   主固件 (SBUS + X5 解析 + 坦克混控 + 安全)
 │       └── config.h                  #   引脚定义与协议常量
 │
 ├── openmv_rear/                      # 👁️ 后视辅助
@@ -223,12 +223,13 @@ tracked-vehicle-rdk/
 
 | 参数 | 值 |
 |------|-----|
+| 方式 | Arduino Servo 库 (PC0-3 无硬件 TIM) |
 | 频率 | 50Hz (周期 20000μs) |
 | 中位 | 1275μs |
 | 最小 | 650μs |
 | 最大 | 1900μs |
-| 左电机 | TIM3 CH3 — PB0 |
-| 右电机 | TIM3 CH4 — PB1 |
+| 左电机 | S1 — PC3 |
+| 右电机 | S2 — PC2 |
 
 ### VIS 帧 — OpenMV → X5
 
@@ -288,8 +289,12 @@ source install/setup.bash
 
 ```bash
 cd stm32_firmware
-pio run --target upload
+
+# 手动进 bootloader: 按住 BOOT0 → 按 RESET → 松 BOOT0
+python -m platformio run --target upload
 ```
+
+> V3.0 扩展板的自动下载电路当前不兼容 DTR/RTS 时序，暂需手动进 bootloader。
 
 ### 一键启动
 
@@ -347,7 +352,7 @@ python3 -m pytest test_vis_parser.py
 
 - [x] M1：硬件选型与采购
 - [x] M2：目录结构与项目骨架
-- [ ] M3：STM32 固件适配（SBUS + MotorCmd 双源）
+- [x] M3：STM32 固件适配（SBUS + MotorCmd 双源）✅
 - [ ] M4：RDK X5 视觉验证（双目 + YOLO + 深度）
 - [ ] M5：跟随算法移植（distScore → MotorCmd）
 - [ ] M6：传感器逐一接入（激光雷达、语音、后视）
