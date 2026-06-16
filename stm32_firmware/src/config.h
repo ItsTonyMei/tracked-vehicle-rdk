@@ -38,8 +38,10 @@ constexpr int      SBUS_STR_SENSITIVITY = 250;
 // ─── 蜂鸣器 (PC5, 经 NPN 三极管 S8050, active-HIGH) ───
 constexpr uint8_t  PIN_BUZZER          = PC5;
 
-// ─── 板载 LED (PB5) ───
-constexpr uint8_t  PIN_LED             = PB5;
+// ─── 板载 LED ───
+// PB5 实为外接 RGB 灯带接口，非普通 LED
+// 板载 LED 具体引脚待确认后填入
+// constexpr uint8_t  PIN_LED             = TBD;
 
 // ─── 安全时序 ───
 constexpr uint32_t ESC_INIT_DELAY_MS   = 3000;   // ESC 自检

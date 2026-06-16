@@ -103,13 +103,14 @@ static void beepArm()     { beep(60); delay(60); beep(60); }
 static void beepDisarm()  { beep(250); }
 
 // ═══════════════════════════════════════════════════════════════
-// LED (PB5)
+// LED — 待确认板载 LED 引脚后启用
+// PB5 为外接 RGB 灯带接口，不是普通 GPIO LED
 // ═══════════════════════════════════════════════════════════════
 
-static void ledInit() {
-    pinMode(PIN_LED, OUTPUT);
-    digitalWrite(PIN_LED, LOW);
-}
+// static void ledInit() {
+//     pinMode(PIN_LED, OUTPUT);
+//     digitalWrite(PIN_LED, LOW);
+// }
 
 // ═══════════════════════════════════════════════════════════════
 // SBUS 驱动 (USART2 PA3, 100000 baud 8E2, 经三极管反相)
@@ -291,7 +292,6 @@ static void mpu9250Read() {
 
 void setup() {
     beepInit();
-    ledInit();
 
     // 显式指定 Serial 引脚 — genericSTM32F103RC 变体不默认映射 USART1
     Serial.setRx(PA10);
@@ -409,16 +409,7 @@ void loop() {
         }
     }
 
-    // 6. LED 闪烁
-    static uint32_t lastLedMs;
-    static bool     ledOn;
-    bool sbusPresent = g_sbus.valid && !g_sbus.failsafe;
-    uint32_t iv = g_motorArmed ? (sbusPresent ? 100 : 250) : 500;
-    if (now - lastLedMs >= iv) {
-        lastLedMs = now;
-        ledOn = !ledOn;
-        digitalWrite(PIN_LED, ledOn ? HIGH : LOW);
-    }
+    // 6. LED — 待确认板载 LED 引脚后启用
 
     // 7. 状态输出 (5Hz)
     static uint32_t lastStat;

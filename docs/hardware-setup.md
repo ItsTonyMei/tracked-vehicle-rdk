@@ -16,7 +16,8 @@
 | 左电调 PWM | PC3 | S1 (Servo) | ZTW Seal G2, 50Hz, 650-1900μs |
 | 右电调 PWM | PC2 | S2 (Servo) | ZTW Seal G2, 50Hz, 650-1900μs |
 | 蜂鸣器 | PC5 | GPIO | NPN S8050 驱动, active-HIGH |
-| LED | PB5 | GPIO | 板载蓝灯 |
+| RGB 灯带 | PB5 | GPIO | 外接 RGB 灯带接口（非板载 LED） |
+| 板载 LED | TBD | GPIO | 待测试确认 |
 | IMU NSS | PB12 | SPI1_NSS | MPU9250 片选 |
 | IMU SCLK | PB13 | SPI1_SCK | MPU9250 时钟 |
 | IMU MISO | PB14 | SPI1_MISO | MPU9250 数据回读 |
