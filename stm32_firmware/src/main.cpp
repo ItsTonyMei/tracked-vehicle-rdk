@@ -2,16 +2,23 @@
  * STM32F103RCT6 — L1 执行与安全层 (Yahboom ROS V3.0 扩展板)
  *
  * 功能:
- *   1. SBUS 接收 (USART2 PA3, 经三极管反相) — 遥控器最高优先级
- *   2. X5 MotorCmd 解析 (USART1 PA9/PA10, CH340N Micro USB) — 自主跟随
- *   3. 坦克混控 + 双路 ESC PWM (S1=PC3/左, S2=PC2/右)
- *   4. 控制优先级: SBUS(ARMED) > X5 > 60s 超时刹停
- *   5. 蜂鸣器(PC5) + LED(PC13, active-LOW) 状态指示
- *   6. MPU9250 IMU 姿态读取 (SPI1)
+ *   1. SBUS 接收 (USART2 PA3, 100k 8E2, 三极管反相) — WFLY RF209S 适配
+ *   2. X5 MotorCmd 解析 (USART1 PA9/PA10, CH340N, 115200) — 6字节 CRC8 帧
+ *   3. 坦克混控 + 双路 ESC PWM (S1=PC3/左, S2=PC2/右, Servo 库 50Hz)
+ *   4. 控制优先级: 手控 SBUS(CH5 ARM) > 自动 X5 > 60s 超时刹停
+ *   5. CH5 ARM/DISARM 防抖 (3帧确认) + 信号丢失需手动重新 ARM
+ *   6. CH6 手控/自动模式切换 (LOW=手控, HIGH=自动) + 非阻塞蜂鸣提示
+ *   7. SBUS 信号防抖: 5帧确认有效, 2次连续超时判丢失
+ *   8. 蜂鸣器(PC5) + LED(PC13, active-LOW) 快/中/慢三速闪烁
+ *   9. MPU9250 IMU SPI1 (PB12-15) 姿态读取
  *
- * WFLY RF209S 适配:
- *   - byte 24 非标准 0x00, 已放宽帧尾校验
- *   - 100000 baud 8E2, 经板载三极管反相
+ * 踩坑记录:
+ *   - genericSTM32F103RC Serial 默认不映射 USART1, 需显式 setRx/setTx
+ *   - PCx 在 LQFP64 无硬件 TIM, 必须用 Servo 库
+ *   - V3.0 CH340N DTR/RTS 未接 NRST/BOOT0, 不支持自动下载
+ *   - WFLY RF209S byte24 非标准 0x00, 需放宽帧尾校验
+ *   - Servo.attach 会重置 GPIOC, PC13 LED 可能被意外关闭
+ *   - delay() 阻塞导致 SBUS 丢帧, 模式切换蜂鸣改用非阻塞状态机
  */
 
 #include <Arduino.h>
@@ -146,8 +153,8 @@ static void ledSet(bool on) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SBUS 驱动 (USART2 PA3, 100000 8E2, 三极管反相)
-// WFLY RF209S: byte24 非标准 0x00, 仅校验帧头 + lost_frame 标志
+// SBUS 驱动 (USART2 PA3, 100k 8E2, 三极管反相, 5帧防抖确认)
+// WFLY RF209S: byte24 非标, failsafe 用 bit4(0x10)
 // ═══════════════════════════════════════════════════════════════
 
 static HardwareSerial SerialSbus(PIN_SBUS_RX, PA2);

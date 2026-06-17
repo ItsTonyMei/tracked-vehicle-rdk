@@ -55,10 +55,22 @@ SBUS 信号本身是反相 UART (idle low)，经板载 NPN 三极管反相后变
 
 V3.0 板的 CH340N 仅接了 TX/RX (USART1)，**DTR/RTS 未连接到 NRST/BOOT0**，不支持自动下载。必须手动进 bootloader。
 
+### 板载 LED 一览
+
+| 丝印 | 颜色 | 引脚 | 可控性 |
+|------|------|------|--------|
+| POWER | 红 | 3.3V 电源轨 | 常亮, 不可控 |
+| 5V | 蓝 | 5V 电源轨 | 常亮, 不可控 |
+| 6V8 | 蓝 | 6.8V 电源轨 | 常亮, 不可控 |
+| MCU | 红 | PC13 (active-LOW) | 已启用, 快/中/慢三速闪烁 |
+| USB | 绿 | CH340N TX | 通信时闪, 不可控 |
+
 ## 踩坑记录
 
 1. **PWM 引脚**: PC0-PC3 在 LQFP64 封装上无硬件 TIM 通道，必须用 Arduino Servo 库。不能用原 C06B 的 TIM3 寄存器操作法。
 2. **Serial 初始化**: `genericSTM32F103RC` 变体默认不映射 `Serial` 到 USART1，需在 `setup()` 中显式调用 `Serial.setRx(PA10); Serial.setTx(PA9);`
 3. **IMU 接口**: MPU9250 在此板上走 SPI (不是常见 I2C)，WHO_AM_I 读回 0x71 确认芯片在线。
 4. **SBUS 反相**: 板载三极管已将 SBUS 反相，USART2 配置为标准模式 (不开启 RXINV 位)。
-5. **自动下载不可用**: V3.0 的 CH340N DTR/RTS 引脚悬空，所有时序组合均无效。手动 BOOT0+RESET 是唯一方式。与 C06B 不同（C06B 的 CH9102 DTR/RTS 有自动下载电路）。
+5. **自动下载不可用**: V3.0 的 CH340N DTR/RTS 引脚悬空，所有时序组合均无效。与 C06B 不同（C06B 的 CH9102 DTR/RTS 有自动下载电路）。
+6. **PB5 非板载 LED**: PB5 实为外接 RGB 灯带接口，不能用简单 digitalWrite 控制。板载 LED 经 GPIO 扫描测试确认为 PC13。
+7. **Servo.attach 重置 GPIOC**: `servoLeft.attach(PC3)` + `servoRight.attach(PC2)` 会重置 GPIOC 寄存器，导致同端口 PC13 LED 被意外关闭。若需 LED 在其他初始化之后亮起，需在 setup 末尾重新调用 `ledInit()`。

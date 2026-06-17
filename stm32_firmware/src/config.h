@@ -59,12 +59,13 @@ constexpr uint8_t  MOTORCMD_FRAME_LEN  = 6;
 constexpr uint8_t  CRC8_POLY           = 0x07;
 constexpr uint8_t  CRC8_INIT           = 0x00;
 
-// ─── SBUS 通道映射 ───
-// WFLY 遥控器: CH1=方向, CH2=油门, CH3=升降, CH4=方向舵, CH5=ARM, CH6=MODE
+// ─── SBUS 通道映射 (WFLY RF209S) ───
+// CH1=方向(右手左右), CH2=油门(左手上下), CH3=升降, CH4=方向舵
+// CH5=ARM/DISARM (3帧防抖), CH6=手控RC/自动X5 (非阻塞蜂鸣)
 constexpr uint8_t  SBUS_CH_STEERING    = 0;     // CH1
 constexpr uint8_t  SBUS_CH_THROTTLE    = 1;     // CH2
 constexpr uint8_t  SBUS_CH_ARM         = 4;     // CH5 (LOW=DISARM, HIGH=ARM)
-constexpr uint8_t  SBUS_CH_MODE        = 5;     // CH6 (LOW=手控SBUS, HIGH=自动X5)
+constexpr uint8_t  SBUS_CH_MODE        = 5;     // CH6 (LOW=手控RC, HIGH=自动X5)
 constexpr uint16_t SBUS_ARM_THRESHOLD  = 1024;  // CH5 > this = ARMED
 constexpr uint16_t SBUS_MODE_THRESHOLD = 1024;  // CH6 > this = 自动模式
 
