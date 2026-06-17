@@ -60,9 +60,9 @@ constexpr uint8_t  CRC8_POLY           = 0x07;
 constexpr uint8_t  CRC8_INIT           = 0x00;
 
 // ─── SBUS 通道映射 ───
-// 标准 SBUS: CH1=转向, CH2=升降, CH3=油门, CH4=方向, CH5=ARM, CH6=MODE
+// WFLY 遥控器: CH1=方向, CH2=油门, CH3=升降, CH4=方向舵, CH5=ARM, CH6=MODE
 constexpr uint8_t  SBUS_CH_STEERING    = 0;     // CH1
-constexpr uint8_t  SBUS_CH_THROTTLE    = 2;     // CH3
+constexpr uint8_t  SBUS_CH_THROTTLE    = 1;     // CH2
 constexpr uint8_t  SBUS_CH_ARM         = 4;     // CH5 (2-pos switch: LOW=DISARM, HIGH=ARM)
 constexpr uint16_t SBUS_ARM_THRESHOLD  = 1024;  // > this = ARMED
 
