@@ -29,7 +29,7 @@ constexpr uint32_t X5_BAUD             = 115200;
 constexpr uint8_t  PIN_SBUS_RX         = PA3;
 constexpr uint32_t SBUS_BAUD           = 100000;
 constexpr uint8_t  SBUS_FRAME_LEN      = 25;
-constexpr uint32_t SBUS_TIMEOUT_MS     = 100;   // 超时视为断开
+constexpr uint32_t SBUS_TIMEOUT_MS     = 200;   // 超时视为断开 (14ms×14帧的容错)
 
 // SBUS → PWM 灵敏度 (满杆=中位 ±250μs, 保守安全)
 constexpr int      SBUS_THR_SENSITIVITY = 250;

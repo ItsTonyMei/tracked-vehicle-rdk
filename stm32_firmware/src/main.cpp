@@ -8,6 +8,10 @@
  *   4. 控制优先级: SBUS(ARMED) > X5 > 60s 超时刹停
  *   5. 蜂鸣器(PC5) + LED(PC13, active-LOW) 状态指示
  *   6. MPU9250 IMU 姿态读取 (SPI1)
+ *
+ * WFLY RF209S 适配:
+ *   - byte 24 非标准 0x00, 已放宽帧尾校验
+ *   - 100000 baud 8E2, 经板载三极管反相
  */
 
 #include <Arduino.h>
@@ -26,13 +30,11 @@ static uint32_t  g_lastCmdMs  = 0;
 static bool      g_escReady   = false;
 static bool      g_motorArmed = false;
 
-// X5 命令缓存
 static uint16_t  g_x5Throttle = PWM_NEUTRAL;
 static uint16_t  g_x5Steering = PWM_NEUTRAL;
 static uint32_t  g_lastX5Ms   = 0;
 static bool      g_x5Valid    = false;
 
-// SBUS 状态
 static struct {
     bool     valid;
     uint16_t channels[16];
@@ -40,9 +42,9 @@ static struct {
     bool     lostFrame;
     uint32_t lastFrameMs;
     bool     armedPrev;
+    int      goodFrames;     // 连续好帧计数器 (防抖: 需≥3 帧才判定有效)
 } g_sbus;
 
-// MPU9250 数据
 static struct {
     bool  present;
     int16_t accel[3];
@@ -50,7 +52,7 @@ static struct {
 } g_imu;
 
 // ═══════════════════════════════════════════════════════════════
-// CRC8 (poly 0x07, init 0x00 — 与 X5/ESP32/ESP8266 一致)
+// CRC8 (poly 0x07, init 0x00)
 // ═══════════════════════════════════════════════════════════════
 
 static uint8_t crc8(const uint8_t *data, size_t len) {
@@ -64,7 +66,7 @@ static uint8_t crc8(const uint8_t *data, size_t len) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ESC PWM (Servo 库 — PC2/PC3 无硬件 TIM 通道)
+// ESC PWM (Servo 库)
 // ═══════════════════════════════════════════════════════════════
 
 static void escInit() {
@@ -77,7 +79,6 @@ static void escInit() {
     Serial.println("us");
 }
 
-// 坦克混控: throttle + steering → 左/右独立 PWM
 static void escSet(uint16_t throttle, uint16_t steering) {
     int sOff = (int)steering - (int)PWM_NEUTRAL;
     int left  = (int)throttle + sOff;
@@ -91,7 +92,7 @@ static void escSet(uint16_t throttle, uint16_t steering) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 蜂鸣器 (PC5, NPN S8050, active-HIGH)
+// 蜂鸣器 (PC5, active-HIGH)
 // ═══════════════════════════════════════════════════════════════
 
 static void beepInit() {
@@ -103,19 +104,20 @@ static void beepArm()     { beep(60); delay(60); beep(60); }
 static void beepDisarm()  { beep(250); }
 
 // ═══════════════════════════════════════════════════════════════
-// LED (PC13, active-LOW — MCU 红色 LED)
+// LED (PC13, active-LOW)
 // ═══════════════════════════════════════════════════════════════
 
 static void ledInit() {
     pinMode(PIN_LED, OUTPUT);
-    digitalWrite(PIN_LED, LED_ACTIVE_LOW ? HIGH : LOW);  // 默认熄灭
+    digitalWrite(PIN_LED, LED_ACTIVE_LOW ? HIGH : LOW);
 }
 static void ledSet(bool on) {
     digitalWrite(PIN_LED, LED_ACTIVE_LOW ? !on : on);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SBUS 驱动 (USART2 PA3, 100000 baud 8E2, 经三极管反相)
+// SBUS 驱动 (USART2 PA3, 100000 8E2, 三极管反相)
+// WFLY RF209S: byte24 非标准 0x00, 仅校验帧头 + lost_frame 标志
 // ═══════════════════════════════════════════════════════════════
 
 static HardwareSerial SerialSbus(PIN_SBUS_RX, PA2);
@@ -127,12 +129,13 @@ static void sbusInit() {
     cr1 |= USART_CR1_PCE;
     USART2->CR1 = cr1;
     USART2->CR2 |= USART_CR2_STOP_0 | USART_CR2_STOP_1;
-    Serial.println("[SBUS] USART2 PA3 @ 100000 8E2");
+    Serial.println("[SBUS] USART2 PA3 @ 100k 8E2 (WFLY)");
 }
 
 static bool sbusParseFrame(const uint8_t *frame, uint16_t *channels) {
-    if (frame[0] != 0x0F || frame[24] != 0x00) return false;
-    if (frame[23] & 0x04) return false;
+    if (frame[0] != 0x0F) return false;
+    if (frame[23] & 0x04) return false;   // lost frame
+    // WFLY RF209S byte24 varies, skip check
 
     channels[0]  = ((frame[1]      ) | (frame[2]  << 8)) & 0x07FF;
     channels[1]  = ((frame[2]  >> 3) | (frame[3]  << 5)) & 0x07FF;
@@ -155,24 +158,33 @@ static bool sbusParseFrame(const uint8_t *frame, uint16_t *channels) {
 }
 
 static void sbusPoll() {
-    while (SerialSbus.available() >= SBUS_FRAME_LEN) {
-        if (SerialSbus.peek() != 0x0F) {
-            SerialSbus.read();
-            continue;
-        }
+    // 逐字节扫描: 读到非 0x0F 就丢弃, 遇到 0x0F 尝试读完整帧
+    // 超时从 2000μs 降到 500μs — 100k baud 每字节约 120μs, 500μs 够 4 字节传输
+    while (SerialSbus.available() > 0) {
+        int b = SerialSbus.read();
+        if (b != 0x0F) continue;
+
+        // 疑似帧头, 尝试读取剩余 24 bytes
         uint8_t frame[SBUS_FRAME_LEN];
-        for (int i = 0; i < SBUS_FRAME_LEN; i++) {
+        frame[0] = 0x0F;
+        bool ok = true;
+        for (int i = 1; i < SBUS_FRAME_LEN; i++) {
             uint32_t t0 = micros();
             while (!SerialSbus.available()) {
-                if (micros() - t0 > 2000) return;
+                if (micros() - t0 > 500) { ok = false; break; }
             }
+            if (!ok) break;
             frame[i] = SerialSbus.read();
         }
+        if (!ok) continue;  // 帧不完整, 丢弃
+
         if (sbusParseFrame(frame, g_sbus.channels)) {
             g_sbus.failsafe    = frame[23] & 0x10;
             g_sbus.lostFrame   = frame[23] & 0x04;
-            g_sbus.valid       = true;
             g_sbus.lastFrameMs = millis();
+            if (++g_sbus.goodFrames >= 5) {
+                g_sbus.valid = true;
+            }
         }
     }
 }
@@ -187,7 +199,7 @@ static uint16_t sbusToPwm(uint16_t sbusVal, int sensitivity) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// X5 MotorCmd 解析 (USART1, 与 Serial debug 共享)
+// X5 MotorCmd 解析
 // ═══════════════════════════════════════════════════════════════
 
 static void x5ParseMotorCmd() {
@@ -324,21 +336,32 @@ void loop() {
     // 1. SBUS 帧接收
     sbusPoll();
 
-    // 2. SBUS 有效性检测
-    static bool sbusWasValid = false;
+    // 2. SBUS 有效性检测 (超时需连续触发 2 次才判丢失, 防短暂丢帧误锁)
+    static bool     sbusWasValid  = false;
+    static uint32_t lastTimeoutMs = 0;
     if (g_sbus.valid && now - g_sbus.lastFrameMs > SBUS_TIMEOUT_MS) {
-        g_sbus.valid = false;
+        if (lastTimeoutMs > 0 && now - lastTimeoutMs < SBUS_TIMEOUT_MS * 2) {
+            // 连续第二次超时 → 确认丢失
+            g_sbus.valid      = false;
+            g_sbus.goodFrames  = 0;
+        }
+        lastTimeoutMs = now;
+    } else {
+        lastTimeoutMs = 0;  // 复位超时计数
     }
     if (!g_sbus.valid && sbusWasValid) {
         Serial.println("[SBUS] 信号丢失");
+        g_motorArmed = false;
+        escSet(PWM_NEUTRAL, PWM_NEUTRAL);
+        beepDisarm();
         sbusWasValid = false;
     }
     if (g_sbus.valid && !sbusWasValid) {
         sbusWasValid = true;
-        Serial.println("[SBUS] 信号恢复");
+        Serial.println("[SBUS] 信号恢复 (需重新 ARM)");
     }
 
-    // 3. X5 MotorCmd 接收
+    // 3. X5 MotorCmd
     x5ParseMotorCmd();
 
     // 4. ESC 自检计时
@@ -356,25 +379,38 @@ void loop() {
 
         uint16_t thr = PWM_NEUTRAL, str = PWM_NEUTRAL;
 
-        // SBUS CH5 边沿检测
+        // SBUS CH5 边沿检测 (防抖: 需连续 3 帧稳定在同一状态)
         bool ch5High = g_sbus.valid && (g_sbus.channels[SBUS_CH_ARM] > SBUS_ARM_THRESHOLD);
         static bool lastCh5High = false;
+        static int  ch5StableCnt = 0;
 
-        if (ch5High && !lastCh5High && g_sbus.valid) {
-            if (!g_motorArmed) {
-                g_motorArmed = true;
-                beepArm();
-                Serial.println("[SBUS] ARMED (CH5 HIGH)");
-            }
-        } else if (!ch5High && lastCh5High && g_sbus.valid) {
-            if (g_motorArmed) {
-                g_motorArmed = false;
-                escSet(PWM_NEUTRAL, PWM_NEUTRAL);
-                beepDisarm();
-                Serial.println("[SBUS] DISARMED (CH5 LOW)");
-            }
+        if (ch5High == lastCh5High) {
+            if (ch5StableCnt < 3) ch5StableCnt++;
+        } else {
+            ch5StableCnt = 1;  // 状态变化, 重置计数
         }
         lastCh5High = ch5High;
+
+        // 只在防抖通过后触发边沿
+        if (ch5StableCnt == 3) {
+            static bool ch5Armed = false;
+            if (ch5High && !ch5Armed) {
+                ch5Armed = true;
+                if (!g_motorArmed) {
+                    g_motorArmed = true;
+                    beepArm();
+                    Serial.println("[SBUS] ARMED (CH5 HIGH)");
+                }
+            } else if (!ch5High && ch5Armed) {
+                ch5Armed = false;
+                if (g_motorArmed) {
+                    g_motorArmed = false;
+                    escSet(PWM_NEUTRAL, PWM_NEUTRAL);
+                    beepDisarm();
+                    Serial.println("[SBUS] DISARMED (CH5 LOW)");
+                }
+            }
+        }
 
         if (sbusActive && g_motorArmed) {
             thr = sbusToPwm(g_sbus.channels[SBUS_CH_THROTTLE], SBUS_THR_SENSITIVITY);
@@ -385,15 +421,12 @@ void loop() {
             thr = g_x5Throttle;
             str = g_x5Steering;
             g_lastCmdMs = now;
-
         }
-        // else: stay at PWM_NEUTRAL
 
         escSet(thr, str);
         g_throttle = thr;
         g_steering = str;
 
-        // 超时锁定
         if (g_motorArmed && now - g_lastCmdMs > CMD_TIMEOUT_MS) {
             g_motorArmed = false;
             escSet(PWM_NEUTRAL, PWM_NEUTRAL);
