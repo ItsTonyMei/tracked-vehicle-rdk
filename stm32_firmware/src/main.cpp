@@ -103,6 +103,36 @@ static void beep(int ms)  { digitalWrite(PIN_BUZZER, HIGH); delay(ms); digitalWr
 static void beepArm()     { beep(60); delay(60); beep(60); }
 static void beepDisarm()  { beep(250); }
 
+// 非阻塞蜂鸣 (用于模式切换等不能阻塞主循环的场景)
+static uint32_t beepEndMs   = 0;
+static uint8_t  beepPattern = 0;  // 0=idle, 1=单声, 2=双声gap, 3=双声
+static void beepNonBlocking(int count) {
+    beepPattern = count * 2 - 1;  // 1→1(单声), 2→3(双声: on→gap→on)
+    beepEndMs   = millis();
+    digitalWrite(PIN_BUZZER, HIGH);
+}
+static void beepPoll() {
+    if (beepPattern == 0) return;
+    uint32_t now = millis();
+    if (beepPattern == 2) {  // gap between double beep
+        if (now - beepEndMs >= 60) {
+            digitalWrite(PIN_BUZZER, HIGH);
+            beepEndMs   = now;
+            beepPattern = 1;  // second beep
+        }
+    } else {  // beep on (pattern 1 or 3)
+        if (now - beepEndMs >= 60) {
+            digitalWrite(PIN_BUZZER, LOW);
+            if (beepPattern == 3) {
+                beepEndMs = now;
+                beepPattern = 2;  // gap
+            } else {
+                beepPattern = 0;  // done
+            }
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // LED (PC13, active-LOW)
 // ═══════════════════════════════════════════════════════════════
@@ -335,6 +365,7 @@ void loop() {
 
     // 1. SBUS 帧接收
     sbusPoll();
+    beepPoll();  // 非阻塞蜂鸣状态机
 
     // 2. SBUS 有效性检测 (超时需连续触发 2 次才判丢失, 防短暂丢帧误锁)
     static bool     sbusWasValid  = false;
@@ -412,12 +443,24 @@ void loop() {
             }
         }
 
-        if (sbusActive && g_motorArmed) {
+        // CH6 模式切换: LOW=手控(SBUS), HIGH=自动(X5)
+        bool autoMode = sbusActive && (g_sbus.channels[SBUS_CH_MODE] > SBUS_MODE_THRESHOLD);
+        static bool lastAutoMode = false;
+        if (autoMode != lastAutoMode && sbusActive) {
+            beepNonBlocking(autoMode ? 2 : 1);  // 自动两声, 手控一声 (非阻塞)
+            Serial.print("[MODE] 切换到 ");
+            Serial.println(autoMode ? "自动(X5)" : "手控(RC)");
+        }
+        lastAutoMode = autoMode;
+
+        if (sbusActive && g_motorArmed && !autoMode) {
+            // 手控模式: SBUS 摇杆直接控制
             thr = sbusToPwm(g_sbus.channels[SBUS_CH_THROTTLE], SBUS_THR_SENSITIVITY);
             str = sbusToPwm(g_sbus.channels[SBUS_CH_STEERING], SBUS_STR_SENSITIVITY);
             g_lastCmdMs = now;
 
         } else if (g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS)) {
+            // 自动模式 或 SBUS 未解锁: X5 指令生效
             thr = g_x5Throttle;
             str = g_x5Steering;
             g_lastCmdMs = now;
@@ -470,11 +513,18 @@ void loop() {
         int left  = t + sOff; if (left  < PWM_MIN) left = PWM_MIN; if (left > PWM_MAX) left = PWM_MAX;
         int right = t - sOff; if (right < PWM_MIN) right = PWM_MIN; if (right > PWM_MAX) right = PWM_MAX;
 
-        bool sbusOk = g_sbus.valid && !g_sbus.failsafe;
-        bool x5Ok   = g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS);
+        bool sbusOk   = g_sbus.valid && !g_sbus.failsafe;
+        bool x5Ok     = g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS);
+        bool autoMode = sbusOk && (g_sbus.channels[SBUS_CH_MODE] > SBUS_MODE_THRESHOLD);
 
-        Serial.print(sbusOk ? (g_motorArmed ? "SBUS ARM" : "SBUS LCK") :
-                     x5Ok   ? "X5      " : "--------");
+        const char* state;
+        if (sbusOk && g_motorArmed && !autoMode)      state = "RC ARM";
+        else if (sbusOk && !g_motorArmed && !autoMode) state = "RC LCK";
+        else if (sbusOk && autoMode)                   state = "AUTO  ";
+        else if (x5Ok)                                 state = "X5    ";
+        else                                           state = "--------";
+
+        Serial.print(state);
         Serial.print(" thr="); Serial.print(g_throttle);
         Serial.print(" st="); Serial.print(g_steering);
         Serial.print(" L="); Serial.print(left);
@@ -487,6 +537,8 @@ void loop() {
         if (sbusOk) {
             Serial.print(" | CH5=");
             Serial.print(g_sbus.channels[SBUS_CH_ARM] > SBUS_ARM_THRESHOLD ? "HI" : "LO");
+            Serial.print(" CH6=");
+            Serial.print(autoMode ? "AUTO" : "MAN");
         }
         Serial.println();
     }
