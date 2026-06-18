@@ -135,59 +135,59 @@ RDK X5 自主指令 (UART)    ▸  遥控器断开时生效
 
 ```
 tracked-vehicle-rdk/
-├── README.md
-├── LICENSE
-├── .gitignore
-├── CHANGELOG.md
+├── README.md                         # 📖 项目总览（本文件）
+├── LICENSE                           # ⚖️ MIT 开源协议
+├── .gitignore                        # 🙈 Git 忽略规则
+├── CHANGELOG.md                      # 📋 版本更新日志
 │
-├── docs/
-│   ├── hardware-setup.md              ✅
-│   ├── protocol-spec.md               ✅
-│   ├── stereo-vision-verification.md  ✅
-│   ├── ROS-ExpansionboardV3.0.pdf     ✅
-│   ├── reference/
-│   │   ├── gs130w_bpu_display_ref.py
-│   │   └── gs130w_x11_display_ref.py
-│   ├── architecture.md                ⬜
-│   ├── migration-plan.md              ⬜
-│   └── safety-design.md               ⬜
+├── docs/                             # 📝 设计文档
+│   ├── hardware-setup.md             #    ✅ 硬件连线与接口对表
+│   ├── protocol-spec.md              #    ✅ MotorCmd / SBUS / VIS 协议定义
+│   ├── stereo-vision-verification.md #    ✅ 双目视觉验证报告
+│   ├── ROS-ExpansionboardV3.0.pdf    #    ✅ STM32 扩展板手册
+│   ├── reference/                    #    📦 调试参考存档
+│   │   ├── gs130w_bpu_display_ref.py #       双目 BPU 渲染调试
+│   │   └── gs130w_x11_display_ref.py #       双目 X11 渲染调试
+│   ├── architecture.md               #    ⬜ 系统架构详细设计
+│   ├── migration-plan.md             #    ⬜ ESP32→X5 分阶段迁移计划
+│   └── safety-design.md              #    ⬜ 安全机制设计文档
 │
-├── config/
-│   ├── stereo_calib.yaml              ✅
-│   ├── yolo_detection.yaml            ⬜
-│   ├── motor_config.yaml              ⬜
-│   ├── follow_params.yaml             ⬜
-│   └── lidar_params.yaml              ⬜
+├── config/                           # ⚙️ YAML 参数文件
+│   ├── stereo_calib.yaml             #    ✅ 双目标定 (GS130W SC132GS)
+│   ├── yolo_detection.yaml           #    ⬜ YOLO 人体检测配置
+│   ├── motor_config.yaml             #    ⬜ 电机 PWM 参数
+│   ├── follow_params.yaml            #    ⬜ 跟随算法参数
+│   └── lidar_params.yaml             #    ⬜ 激光雷达配置
 │
-├── launch/
-│   ├── stereo_vision.launch.py        ✅
-│   ├── motor_bridge.launch.py         ✅
-│   ├── full_system_tracking.launch.py ✅
-│   ├── person_follow.launch.py        ⬜
-│   └── full_system.launch.py          ⬜
+├── launch/                           # 🚀 ROS2 launch 文件
+│   ├── stereo_vision.launch.py       #    ✅ 双目采集 + StereoNet 深度图
+│   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
+│   ├── full_system_tracking.launch.py#    ✅ 人体跟随 + 桥接一键启动
+│   ├── person_follow.launch.py       #    ⬜ 双目深度 + distScore 跟随
+│   └── full_system.launch.py         #    ⬜ 全传感器一键全系统启动
 │
-├── src/tracked_vehicle/
-│   ├── setup.py                       ✅
-│   ├── setup.cfg                      ✅
-│   ├── package.xml                    ✅
-│   ├── resource/tracked_vehicle       ✅
-│   ├── tracked_vehicle/
-│   │   ├── __init__.py                ✅
-│   │   ├── cmd_vel_bridge.py          ✅
-│   │   ├── follow_logic.py            ⬜
-│   │   ├── person_tracker.py          ⬜
-│   │   └── ...
-│   └── scripts/
-│       └── camera_info_repub.py       ✅
+├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.3.0)
+│   ├── setup.py                      #    ✅ colcon 构建配置
+│   ├── setup.cfg                     #    ✅ 可执行文件路径
+│   ├── package.xml                   #    ✅ ROS2 依赖声明
+│   ├── resource/tracked_vehicle      #    ✅ 包标记文件
+│   ├── tracked_vehicle/              #    核心 Python 模块
+│   │   ├── __init__.py               #    ✅ 包初始化
+│   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接
+│   │   ├── follow_logic.py           #    ⬜ distScore 跟随算法 (移植ESP32)
+│   │   ├── person_tracker.py         #    ⬜ YOLO 检测 + 双目深度采点
+│   │   └── ...                       #    ⬜ 更多感知与控制模块
+│   └── scripts/                      # 🔧 工具脚本
+│       └── camera_info_repub.py      #    ✅ camera_info 尺寸缩放
 │
-├── models/                            (模型由 apt 管理, .bin 不提交)
-├── stm32_firmware/                    ✅
-│   ├── platformio.ini
+├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交)
+├── stm32_firmware/                   # 🔩 STM32 扩展板固件 ✅
+│   ├── platformio.ini                #    PlatformIO 构建 (STM32F103RCT6)
 │   └── src/
-│       ├── main.cpp
-│       └── config.h
-├── openmv_rear/                       ⬜
-└── tests/                             ⬜
+│       ├── main.cpp                  #    SBUS + MotorCmd + 坦克混控 + 安全
+│       └── config.h                  #    引脚定义与协议常量
+├── openmv_rear/                      # 👁️ 后视辅助 ⬜
+└── tests/                            # 🧪 单元测试 ⬜
 ```
 
 ---
