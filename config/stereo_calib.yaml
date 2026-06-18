@@ -1,0 +1,41 @@
+# GS130W (SC132GS) 双目标定参数
+# 传感器原生: 1088x1280 → GDC 输出: 816x960 → stereonet 输入: 640x352
+# 标定日期: 2026-06-19
+# 模型: DStereoV2.4_int8 (23fps 上限)
+
+camera:
+  width: 640
+  height: 352
+  fx: 491.73
+  fy: 491.93
+  cx: 406.33
+  cy: 482.29
+  distortion_model: "plumb_bob"
+  d: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+baseline: 0.06
+
+render:
+  type: "distance"
+  max_disp: 80
+  z_range: 3.0
+
+inference:
+  model: "DStereoV2.4_int8"
+  model_path: "/opt/tros/humble/share/hobot_stereonet/config/DStereoV2.4_int8.bin"
+  thread_num: 2
+  max_fps: 23.0
+
+mipi_cam:
+  sensor: "sc132gs"
+  width: 640
+  height: 352
+  framerate: 30.0
+  format: "nv12"
+  gdc_enable: true
+  rotation: 90.0
+  cal_rotation: 90.0
+  lpwm_enable: true
+  frame_ts_type: "realtime"
+  channel_left: 0
+  channel_right: 2

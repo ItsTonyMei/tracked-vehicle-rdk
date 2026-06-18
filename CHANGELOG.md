@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-06-19
+
+### Added
+- **人体跟随功能块** — mono2d_body_detection + body_tracking + cmd_vel_bridge
+  - 人体检测+多目标跟踪 @ 60 FPS, 10ms 推理 (BPU 加速)
+  - 验证通过: GS130W 单通道 960×544, rotation=90, sc132gs calibration
+  - `src/tracked_vehicle/tracked_vehicle/cmd_vel_bridge.py` — cmd_vel → MotorCmd (0xAA) 串口桥接
+  - `launch/full_system_tracking.launch.py` — 人体跟随 + 桥接一键启动
+  - `launch/motor_bridge.launch.py` — 独立串口桥接启动
+  - ROS2 包正式化: `setup.py`, `setup.cfg`, `package.xml`, `resource/`
+- **双目视觉功能块** — GS130W + StereoNet V2.4_int8 深度估计 pipeline ✅
+  - `launch/stereo_vision.launch.py` — 一键启动双目采集 + 深度推理 + Web 可视化
+  - `config/stereo_calib.yaml` — 双目标定参数 (内参、基线、渲染配置)
+  - `src/tracked_vehicle/scripts/camera_info_repub.py` — camera_info 尺寸缩放工具
+  - `docs/stereo-vision-verification.md` — 完整验证文档 (参数、性能、踩坑记录)
+
+### Changed
+- 仓库整理: 调试脚本移至 `docs/reference/`, PDF 移至 `docs/`, 空目录加 `.gitkeep`
+- README 目录结构标注 ✅/⬜ 实现状态; 路线图 M4 标记完成
+
+### Fixed
+- README PWM 参数与 config.h 同步 (1500μs 中位 / 1000-2000μs 范围)
+- 注释统一: 1500μs 为标准舵机 PWM 通用规范, 1275μs 为 C06B 非标误用
+
+### Verified
+- GS130W 双目在 RDK X5 上稳定运行: 640×352@30fps → StereoNet V2.4_int8 → 21.3fps 深度图
+- Body Tracking 在 RDK X5 + GS130W 上稳定运行: 960×544@60fps, 人体检测 10ms 推理
+- `/cmd_vel` (linear=0.2, angular=0.4) → MotorCmd 桥接逻辑验证通过
+- 关键参数: `mipi_rotation=90.0` (SC132GS 竖屏 sensor 必须), `mipi_channel=0,2` (左右目顺序)
+
 ## [0.2.1] - 2026-06-19
 
 ### Fixed

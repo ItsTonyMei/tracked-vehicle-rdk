@@ -129,75 +129,68 @@ RDK X5 自主指令 (UART)    ▸  遥控器断开时生效
 
 ## 📁 目录结构
 
-```
+> ✅ 已实现  ⬜ 待实现
+
 ```
 tracked-vehicle-rdk/
-├── README.md                         # 项目总览（本文件）
-├── LICENSE                           # MIT 开源协议
-├── .gitignore                        # Git 忽略规则
-├── CHANGELOG.md                      # 版本更新日志
+├── README.md                         # ✅ 项目总览（本文件）
+├── LICENSE                           # ✅ MIT 开源协议
+├── .gitignore                        # ✅ Git 忽略规则
+├── CHANGELOG.md                      # ✅ 版本更新日志
 │
 ├── docs/                             # 📝 设计文档
-│   ├── architecture.md               #   系统架构详细设计
-│   ├── hardware-setup.md             #   硬件连线与接口对表
-│   ├── protocol-spec.md              #   MotorCmd / VIS / SBUS 协议定义
-│   ├── migration-plan.md             #   ESP32→X5 分阶段迁移计划
-│   └── safety-design.md              #   安全机制设计文档
+│   ├── hardware-setup.md             #    ✅ 硬件连线与接口对表
+│   ├── protocol-spec.md              #    ✅ MotorCmd / SBUS / VIS 协议定义
+│   ├── stereo-vision-verification.md #    ✅ 双目视觉验证报告
+│   ├── ROS-ExpansionboardV3.0.pdf    #    ✅ 扩展板手册
+│   ├── reference/                    #    📦 调试参考档案
+│   │   ├── gs130w_bpu_display_ref.py
+│   │   └── gs130w_x11_display_ref.py
+│   ├── architecture.md               #    ⬜ 系统架构详细设计
+│   ├── migration-plan.md             #    ⬜ ESP32→X5 分阶段迁移计划
+│   └── safety-design.md              #    ⬜ 安全机制设计文档
 │
 ├── config/                           # ⚙️ YAML 参数文件
-│   ├── stereo_calib.yaml             #   双目标定参数
-│   ├── yolo_detection.yaml           #   YOLO 检测配置
-│   ├── motor_config.yaml             #   电机 PWM 参数
-│   ├── follow_params.yaml            #   跟随算法参数
-│   └── lidar_params.yaml             #   激光雷达配置
+│   ├── stereo_calib.yaml             #    ✅ 双目标定参数 (GS130W)
+│   ├── yolo_detection.yaml           #    ⬜ YOLO 检测配置
+│   ├── motor_config.yaml             #    ⬜ 电机 PWM 参数
+│   ├── follow_params.yaml            #    ⬜ 跟随算法参数
+│   └── lidar_params.yaml             #    ⬜ 激光雷达配置
 │
 ├── launch/                           # 🚀 ROS2 launch 文件
-│   ├── stereo_vision.launch.py       #   双目采集 + 深度图
-│   ├── person_detection.launch.py    #   YOLO 人体检测
-│   ├── person_follow.launch.py       #   检测 + 深度 + 跟随
-│   ├── motor_bridge.launch.py        #   X5↔STM32 串口桥接
-│   ├── lidar_node.launch.py          #   激光雷达驱动
-│   ├── voice_control.launch.py       #   语音模块接口
-│   ├── rear_view.launch.py           #   后视 VIS 帧解析
-│   └── full_system.launch.py         #   一键全系统启动
+│   ├── stereo_vision.launch.py       #    ✅ 双目采集 + 深度图
+│   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
+│   ├── full_system_tracking.launch.py#    ✅ 人体跟随 + 桥接 一键启动
+│   ├── person_follow.launch.py       #    ⬜ 双目深度 + 跟随算法
+│   └── full_system.launch.py         #    ⬜ 全传感器一键启动
 │
-├── src/tracked_vehicle/              # 🐍 ROS2 包
-│   ├── setup.py                      #   colcon 构建
-│   ├── package.xml                   #   依赖声明
-│   ├── tracked_vehicle/              #   核心 Python 模块
-│   │   ├── __init__.py
-│   │   ├── motor_controller.py       #   MotorCmd 协议生成与串口收发
-│   │   ├── follow_logic.py           #   distScore 跟随算法（移植自 ESP32）
-│   │   ├── person_tracker.py         #   YOLO 检测框 + 双目深度采点
-│   │   ├── lidar_fusion.py           #   激光雷达避障融合
-│   │   ├── rear_view_parser.py       #   OpenMV VIS 帧解析
-│   │   ├── voice_commander.py        #   AI 语音指令解析
-│   │   ├── sbus_monitor.py           #   SBUS 遥控器状态监听
-│   │   └── safety_watchdog.py        #   60s 命令超时安全看门狗
+├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.3.0)
+│   ├── setup.py                      #    ✅ colcon 构建配置
+│   ├── setup.cfg                     #    ✅ 可执行文件路径
+│   ├── package.xml                   #    ✅ ROS2 依赖声明
+│   ├── resource/tracked_vehicle      #    ✅ 包标记文件
+│   ├── tracked_vehicle/              #    核心 Python 模块
+│   │   ├── __init__.py               #    ✅
+│   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接
+│   │   ├── follow_logic.py           #    ⬜ distScore 跟随算法
+│   │   ├── person_tracker.py         #    ⬜ YOLO 检测 + 双目深度采点
+│   │   ├── motor_controller.py       #    ⬜ MotorCmd 协议 + 串口 (已集成到 bridge)
+│   │   └── ...                       #    ⬜ 更多感知与控制模块
 │   └── scripts/                      # 🔧 工具脚本
-│       ├── motor_calibrate.py        #   电调校准
-│       ├── stereo_calib_capture.py   #   双目标定图像采集
-│       ├── protocol_sniff.py         #   串口抓包调试
-│       └── system_check.py           #   一键硬件体检
+│       └── camera_info_repub.py      #    ✅ camera_info 尺寸缩放
 │
-├── models/                           # 🧠 BPU 模型文件 (.bin)
-│   ├── person_yolov5s_x5.bin         #   YOLOv5s 人体检测 (Bayes)
-│   └── stereonet_depth_x5.bin        #   双目深度模型
+├── models/                           # 🧠 BPU 模型 (系统路径 /opt/tros/...)
+│   └── .gitkeep                      #    .bin 文件由 apt 管理, 不提交
 │
-├── stm32_firmware/                   # 🔩 STM32 扩展板固件 (已实现 ✅)
-│   ├── platformio.ini                #   PlatformIO 构建配置 (STM32F103RCT6)
+├── stm32_firmware/                   # 🔩 STM32 扩展板固件 ✅
+│   ├── platformio.ini                #    PlatformIO (STM32F103RCT6)
 │   └── src/
-│       ├── main.cpp                  #   主固件 (SBUS + X5 解析 + 坦克混控 + 安全)
-│       └── config.h                  #   引脚定义与协议常量
+│       ├── main.cpp                  #    SBUS + MotorCmd + 坦克混控 + 安全
+│       └── config.h                  #    引脚定义与协议常量
 │
-├── openmv_rear/                      # 👁️ 后视辅助
-│   └── main.py                       #   后视人体检测 + VIS 帧发送
+├── openmv_rear/                      # 👁️ 后视辅助 ⬜
 │
-└── tests/                            # 🧪 单元测试
-    ├── test_motor_protocol.py        #   MotorCmd 编解码
-    ├── test_follow_logic.py          #   跟随算法边界条件
-    ├── test_vis_parser.py            #   VIS 帧解析
-    └── test_safety_watchdog.py       #   安全看门狗
+└── tests/                            # 🧪 单元测试 ⬜
 ```
 
 ---
@@ -217,7 +210,7 @@ tracked-vehicle-rdk/
 
 - 波特率：**115200 bps**
 - 发送间隔：**50ms**
-- 停止值：`throttle=0, steering=0`
+- 停止值：`throttle=1500, steering=1500`
 
 ### PWM 输出 — STM32 → 电调
 
@@ -225,9 +218,9 @@ tracked-vehicle-rdk/
 |------|-----|
 | 方式 | Arduino Servo 库 (PC0-3 无硬件 TIM) |
 | 频率 | 50Hz (周期 20000μs) |
-| 中位 | 1275μs |
-| 最小 | 650μs |
-| 最大 | 1900μs |
+| 中位 | 1500μs |
+| 最小 | 1000μs |
+| 最大 | 2000μs |
 | 左电机 | S1 — PC3 |
 | 右电机 | S2 — PC2 |
 
@@ -296,13 +289,27 @@ python -m platformio run --target upload
 
 > V3.0 扩展板的自动下载电路当前不兼容 DTR/RTS 时序，暂需手动进 bootloader。
 
-### 一键启动
+### 人体跟随 + 电机控制（已实现）
 
 ```bash
+# 前置步骤: 拷贝人体检测模型配置
 source /opt/tros/humble/setup.bash
+cp -r /opt/tros/humble/lib/mono2d_body_detection/config/ .
+
+# 构建本项目
+cd ~/Desktop/tracked-vehicle-rdk
+colcon build --packages-select tracked_vehicle
 source install/setup.bash
-ros2 launch tracked_vehicle full_system.launch.py
+
+# 一键启动: 人体检测 + 跟随策略 + 串口桥接
+# (STM32 需通过 Micro USB 连接到 RDK X5 的 USB 口)
+ros2 launch tracked_vehicle full_system_tracking.launch.py
+
+# 若串口号不同
+ros2 launch tracked_vehicle full_system_tracking.launch.py serial_port:=/dev/ttyUSB1
 ```
+
+Web 可视化: `http://<RDK_IP>:8000`
 
 ### 子系统独立启动
 
@@ -310,17 +317,8 @@ ros2 launch tracked_vehicle full_system.launch.py
 # 仅双目 + 深度
 ros2 launch tracked_vehicle stereo_vision.launch.py
 
-# 仅人体跟随
-ros2 launch tracked_vehicle person_follow.launch.py
-
-# 仅电机控制
+# 仅串口桥接 (需先启动 body_tracking)
 ros2 launch tracked_vehicle motor_bridge.launch.py
-```
-
-### 硬件体检
-
-```bash
-python3 src/tracked_vehicle/scripts/system_check.py
 ```
 
 ---
@@ -329,11 +327,13 @@ python3 src/tracked_vehicle/scripts/system_check.py
 
 | 文档 | 内容 |
 |------|------|
-| [docs/architecture.md](./docs/architecture.md) | 系统架构详细设计 |
-| [docs/hardware-setup.md](./docs/hardware-setup.md) | 硬件连线与接口对表 |
-| [docs/protocol-spec.md](./docs/protocol-spec.md) | 通信协议完整定义 |
-| [docs/migration-plan.md](./docs/migration-plan.md) | ESP32→X5 分阶段迁移计划 |
-| [docs/safety-design.md](./docs/safety-design.md) | 安全机制设计 |
+| [docs/hardware-setup.md](./docs/hardware-setup.md) | ✅ 硬件连线与接口对表 |
+| [docs/protocol-spec.md](./docs/protocol-spec.md) | ✅ 通信协议完整定义 |
+| [docs/stereo-vision-verification.md](./docs/stereo-vision-verification.md) | ✅ 双目视觉验证报告 |
+| [docs/ROS-ExpansionboardV3.0-en-new-20250509.pdf](./docs/ROS-ExpansionboardV3.0-en-new-20250509.pdf) | ✅ STM32 扩展板手册 |
+| [docs/architecture.md](./docs/architecture.md) | ⬜ 系统架构详细设计 |
+| [docs/migration-plan.md](./docs/migration-plan.md) | ⬜ ESP32→X5 分阶段迁移计划 |
+| [docs/safety-design.md](./docs/safety-design.md) | ⬜ 安全机制设计 |
 
 ---
 
@@ -353,8 +353,11 @@ python3 -m pytest test_vis_parser.py
 - [x] M1：硬件选型与采购
 - [x] M2：目录结构与项目骨架
 - [x] M3：STM32 固件适配（SBUS + MotorCmd 双源）✅
-- [ ] M4：RDK X5 视觉验证（双目 + YOLO + 深度）
-- [ ] M5：跟随算法移植（distScore → MotorCmd）
+- [x] M4：RDK X5 视觉验证
+  - [x] 双目深度 (StereoNet V2.4_int8 @ 21 FPS)
+  - [x] 人体检测+跟踪 (Body Tracking @ 60 FPS)
+  - [x] cmd_vel → MotorCmd 串口桥接
+- [ ] M5：跟随算法移植（distScore 双目版 → MotorCmd）
 - [ ] M6：传感器逐一接入（激光雷达、语音、后视）
 - [ ] M7：全系统联调与安全验收
 - [ ] M8：场地实车测试
