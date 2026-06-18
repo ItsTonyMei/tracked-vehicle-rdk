@@ -13,8 +13,8 @@
 | X5 通信 TX | PA9 | USART1_TX | CH340N → Micro USB → X5 |
 | X5 通信 RX | PA10 | USART1_RX | CH340N → Micro USB → X5 |
 | SBUS 输入 | PA3 | USART2_RX | 经三极管反相, 100000bps 8E2 |
-| 左电调 PWM | PC3 | S1 (Servo) | ZTW Seal G2, 50Hz, 650-1900μs |
-| 右电调 PWM | PC2 | S2 (Servo) | ZTW Seal G2, 50Hz, 650-1900μs |
+| 左电调 PWM | PC3 | S1 (Servo) | ZTW Seal G2, 50Hz, 1000-2000μs |
+| 右电调 PWM | PC2 | S2 (Servo) | ZTW Seal G2, 50Hz, 1000-2000μs |
 | 蜂鸣器 | PC5 | GPIO | NPN S8050 驱动, active-HIGH |
 | RGB 灯带 | PB5 | GPIO | 外接 RGB 灯带接口 |
 | 板载 LED | PC13 | GPIO | MCU 红色 LED, active-LOW, 已测试可用 |
@@ -34,7 +34,7 @@ STM32 GND     ─── 两路电调 GND (共地)
 电调 BEC 5V 输出  ─── 悬空不接! (MCU 独立供电)
 ```
 
-> ZTW Seal G2 中位 1275μs 为非标值 (不是标准舵机 1500μs)，已在 C06B 板上实测验证。
+> ZTW Seal G2 不同批次中位不同: 原 C06B 项目批次用 1275μs (非标), 当前批次需标准 1500μs。以实测为准。
 
 ### SBUS 接线
 
@@ -74,3 +74,4 @@ V3.0 板的 CH340N 仅接了 TX/RX (USART1)，**DTR/RTS 未连接到 NRST/BOOT0*
 5. **自动下载不可用**: V3.0 的 CH340N DTR/RTS 引脚悬空，所有时序组合均无效。与 C06B 不同（C06B 的 CH9102 DTR/RTS 有自动下载电路）。
 6. **PB5 非板载 LED**: PB5 实为外接 RGB 灯带接口，不能用简单 digitalWrite 控制。板载 LED 经 GPIO 扫描测试确认为 PC13。
 7. **Servo.attach 重置 GPIOC**: `servoLeft.attach(PC3)` + `servoRight.attach(PC2)` 会重置 GPIOC 寄存器，导致同端口 PC13 LED 被意外关闭。若需 LED 在其他初始化之后亮起，需在 setup 末尾重新调用 `ledInit()`。
+8. **ZTW Seal G2 中位批次差异**: 原 C06B 项目电调批次中位为 1275μs (非标)，但当前批次需标准 1500μs。使用错误的 1275μs 会导致 ESC 无法完成自检。不同批次以实测为准。

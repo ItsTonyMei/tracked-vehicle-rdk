@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] - 2026-06-19
+
+### Fixed
+- PWM 参数改为标准值: 中位 1500μs, 范围 1000-2000μs
+- ZTW Seal G2 此批次需标准舵机 PWM, 1275μs 非标值导致 ESC 无法完成自检
+
 ## [0.2.0] - 2026-06-17
 
 ### Added

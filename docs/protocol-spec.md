@@ -15,19 +15,19 @@
 
 - **CRC8**: poly=0x07, init=0x00, 与 ESP32/ESP8266/原项目一致
 - **发送间隔**: 50ms
-- **范围**: throttle/steering 均为 650-1900μs (uint16)
-- **停止值**: throttle=1275, steering=1275
+- **范围**: throttle/steering 均为 1000-2000μs (uint16)
+- **停止值**: throttle=1500, steering=1500
 - **超时**: 60s 无有效帧 → STM32 自动切中位 + 蜂鸣锁定
 
 ### 坦克混控 (STM32 端)
 
 ```
-sOff = steering - 1275
-left  = throttle + sOff    (钳位 650-1900)
-right = throttle - sOff    (钳位 650-1900)
+sOff = steering - 1500
+left  = throttle + sOff    (钳位 1000-2000)
+right = throttle - sOff    (钳位 1000-2000)
 ```
 
-- 1275μs 为中位 (ZTW Seal G2 非标值, 勿改为 1500)
+- 1500μs 为中位 (标准舵机 PWM)
 
 ### X5 端串口说明
 
@@ -110,7 +110,7 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 
 - WFLY RF209S: failsafe 标志位为 byte23 **bit4** (0x10), 非标准 bit3 (0x08)
 - SBUS 帧 byte23 bit2=1 → lost_frame → 丢弃该帧
-- failsafe 激活 → 立即切中位 1275μs
+- failsafe 激活 → 立即切中位 1500μs
 
 ### WFLY RF209S 适配说明
 

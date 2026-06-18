@@ -14,11 +14,12 @@
  *
  * 踩坑记录:
  *   - genericSTM32F103RC Serial 默认不映射 USART1, 需显式 setRx/setTx
- *   - PCx 在 LQFP64 无硬件 TIM, 必须用 Servo 库
+ *   - PCx 在 LQFP64 无硬件 TIM, 必须用 Servo 库; 通用 TIM ISR 被框架占用
  *   - V3.0 CH340N DTR/RTS 未接 NRST/BOOT0, 不支持自动下载
- *   - WFLY RF209S byte24 非标准 0x00, 需放宽帧尾校验
- *   - Servo.attach 会重置 GPIOC, PC13 LED 可能被意外关闭
+ *   - WFLY RF209S byte24 非标准 0x00, 需放宽帧尾校验; failsafe 用 bit4(0x10)
  *   - delay() 阻塞导致 SBUS 丢帧, 模式切换蜂鸣改用非阻塞状态机
+ *   - Servo.attach 会重置 GPIOC, PC13 LED 可能被意外关闭
+ *   - ZTW Seal G2 不同批次中位不同: 原 C06B 用 1275μs, 此批次需标准 1500μs
  */
 
 #include <Arduino.h>
