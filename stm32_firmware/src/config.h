@@ -9,9 +9,9 @@
 
 // ─── PWM 参数 (ZTW Seal G2 双路无刷电调, 50Hz) ───
 // 中位 1275μs 为实测非标值, 勿改回 1500
-constexpr uint16_t PWM_NEUTRAL         = 1275;
-constexpr uint16_t PWM_MIN             = 650;
-constexpr uint16_t PWM_MAX             = 1900;
+constexpr uint16_t PWM_NEUTRAL         = 1500;
+constexpr uint16_t PWM_MIN             = 1000;
+constexpr uint16_t PWM_MAX             = 2000;
 
 // ─── 舵机 PWM 引脚 (Servo 库软件 PWM) ───
 // PC0-PC3 在 LQFP64 封装无硬件 TIM 通道, 使用 Servo 库
