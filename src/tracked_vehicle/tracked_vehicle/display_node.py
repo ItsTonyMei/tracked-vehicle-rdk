@@ -55,26 +55,50 @@ class DisplayNode(Node):
             for t in targets.targets:
                 if t.type != 'person':
                     continue
+                # 收集各类型 ROI
+                body_roi = head_roi = None
                 for roi in t.rois:
-                    r = roi.rect
-                    x1, y1 = int(r.x_offset), int(r.y_offset)
-                    x2, y2 = x1 + int(r.width), y1 + int(r.height)
-                    dist = (self.bbox_ref * self.bbox_ref_dist) / r.width if r.width > 0 else 0
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    head_h = (y2 - y1) // 3
-                    cv2.rectangle(frame, (x1, y1), (x2, y1 + head_h), (255, 255, 0), 2)
-                    label = f'#{t.track_id} {dist:.1f}m'
-                    cv2.rectangle(frame, (x1, y1 - 24), (x1 + 160, y1), (0, 255, 0), -1)
-                    cv2.putText(frame, label, (x1 + 4, y1 - 6),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-                    # 画面中心十字
-                    cx0, cy0 = orig_w // 2, orig_h // 2
-                    cv2.line(frame, (cx0 - 20, cy0), (cx0 + 20, cy0), (128, 128, 128), 1)
-                    cv2.line(frame, (cx0, cy0 - 20), (cx0, cy0 + 20), (128, 128, 128), 1)
-                    # 人框→中心偏移线
-                    bx, by = x1 + int(r.width) // 2, y1 + int(r.height) // 2
-                    cv2.line(frame, (bx, by), (cx0, cy0), (255, 0, 255), 1)
-                    cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (100, 100, 100), 1)
+                    if roi.type == 'body':
+                        body_roi = roi.rect
+                    elif roi.type == 'head':
+                        head_roi = roi.rect
+
+                if body_roi is None:
+                    continue
+
+                r = body_roi
+                x1, y1 = int(r.x_offset), int(r.y_offset)
+                x2, y2 = x1 + int(r.width), y1 + int(r.height)
+                dist = (self.bbox_ref * self.bbox_ref_dist) / r.width if r.width > 0 else 0
+
+                # 身体框 (绿色)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                # 头部框: 优先用模型检测的 head ROI, 否则用 body 上 1/3 估算
+                if head_roi is not None:
+                    hx1, hy1 = int(head_roi.x_offset), int(head_roi.y_offset)
+                    hx2, hy2 = hx1 + int(head_roi.width), hy1 + int(head_roi.height)
+                else:
+                    hx1, hy1 = x1, y1
+                    hx2, hy2 = x2, y1 + (y2 - y1) // 3
+                cv2.rectangle(frame, (hx1, hy1), (hx2, hy2), (255, 255, 0), 2)
+
+                # 标签
+                label = f'#{t.track_id} {dist:.1f}m'
+                cv2.rectangle(frame, (x1, y1 - 24), (x1 + 160, y1), (0, 255, 0), -1)
+                cv2.putText(frame, label, (x1 + 4, y1 - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+                # 人框→中心偏移线
+                bx, by = x1 + int(r.width) // 2, y1 + int(r.height) // 2
+                cv2.line(frame, (bx, by), (orig_w//2, orig_h//2), (255, 0, 255), 1)
+
+        # ── 画面中心十字 + 死区 (固定, 只画一次) ─────
+        if self._frame is not None:
+            cx0, cy0 = orig_w // 2, orig_h // 2
+            cv2.line(frame, (cx0 - 20, cy0), (cx0 + 20, cy0), (128, 128, 128), 1)
+            cv2.line(frame, (cx0, cy0 - 20), (cx0, cy0 + 20), (128, 128, 128), 1)
+            cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (100, 100, 100), 1)
 
         # ── 可选旋转 ─────────────────────────────────
         if self.rotate_deg:
