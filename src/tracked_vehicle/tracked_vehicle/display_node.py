@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""本地屏显 — 触摸点选追踪 + 骨骼可视化 + 隐藏光标"""
+"""本地屏显 — 触摸点选追踪 + 骨骼可视化"""
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from ai_msgs.msg import PerceptionTargets
 import cv2
 import numpy as np
-import os
 
 # COCO 骨骼连接 + 关键点颜色
 SKELETON = [(5,6),(5,7),(7,9),(6,8),(8,10),(11,12),
@@ -15,25 +14,6 @@ KP_COLORS = [(255,0,0),(255,85,0),(255,170,0),(255,255,0),
              (170,255,0),(85,255,0),(0,255,0),(0,255,85),
              (0,255,170),(0,255,255),(0,170,255),(0,85,255),
              (0,0,255),(85,0,255),(170,0,255),(255,0,255),(255,0,170),(255,0,85)]
-
-
-def hide_cursor():
-    """隐藏 X11 光标 (保留点击功能)"""
-    try:
-        # 创建 1x1 透明光标
-        os.system('xsetroot -cursor /dev/null 2>/dev/null || true')
-        # 备选: 用 X11 创建空光标
-        os.popen('python3 -c "'
-            'from ctypes import cdll, c_char_p;'
-            'x11=cdll.LoadLibrary(\"libX11.so.6\");'
-            'd=x11.XOpenDisplay(None);'
-            'w=x11.XDefaultRootWindow(d);'
-            'bm=x11.XCreateBitmapFromData(d,w,c_char_p(bytes(8)),1,1);'
-            'c=x11.XCreatePixmapCursor(d,bm,bm,0,0,0,0);'
-            'x11.XDefineCursor(d,w,c);'
-            'x11.XFlush(d)" 2>/dev/null || true')
-    except Exception:
-        pass
 
 
 class DisplayNode(Node):
@@ -57,7 +37,6 @@ class DisplayNode(Node):
         cv2.moveWindow(self._window, 0, 0)
         cv2.setWindowProperty(self._window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         cv2.setMouseCallback(self._window, self._on_mouse)
-        hide_cursor()
         self.get_logger().info('display_node OK (touch select enabled)')
 
     def img_cb(self, msg: CompressedImage):
