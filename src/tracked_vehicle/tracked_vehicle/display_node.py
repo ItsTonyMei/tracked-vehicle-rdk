@@ -13,6 +13,7 @@ class DisplayNode(Node):
         self.target_dist = self.declare_parameter('target_dist', 2.0).value
         self.bbox_ref = self.declare_parameter('bbox_ref_width', 500.0).value
         self.bbox_ref_dist = self.declare_parameter('bbox_ref_dist', 2.0).value
+        self.rotate_deg = self.declare_parameter('rotate_deg', 0).value
         self._frame = None
         self._targets = None
         self._window = 'RDK X5 Tracker'
@@ -22,7 +23,7 @@ class DisplayNode(Node):
         cv2.namedWindow(self._window, cv2.WINDOW_NORMAL)
         cv2.setWindowProperty(self._window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         cv2.setWindowProperty(self._window, cv2.WND_PROP_TOPMOST, 1)
-        self.get_logger().info('display_node OK - CompressedImage mode')
+        self.get_logger().info(f'display_node OK (rotate={self.rotate_deg}deg)')
 
     def img_cb(self, msg: CompressedImage):
         raw = np.frombuffer(msg.data, dtype=np.uint8)
@@ -31,11 +32,32 @@ class DisplayNode(Node):
     def det_cb(self, msg: PerceptionTargets):
         self._targets = msg
 
+    def _rotate(self, img):
+        if self.rotate_deg == 90:
+            return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        elif self.rotate_deg == 270 or self.rotate_deg == -90:
+            return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        elif self.rotate_deg == 180:
+            return cv2.rotate(img, cv2.ROTATE_180)
+        return img
+
     def render(self):
         if self._frame is None:
             return
-        frame = self._frame.copy()
+        frame = self._rotate(self._frame.copy())
+
+        # 缩放填充全屏 (1024x600), 居中裁切
+        scr_w, scr_h = 1024, 600
+        fh, fw = frame.shape[:2]
+        scale = max(scr_w / fw, scr_h / fh)
+        nw, nh = int(fw * scale), int(fh * scale)
+        frame = cv2.resize(frame, (nw, nh))
+        # 居中裁切
+        sx = (nw - scr_w) // 2
+        sy = (nh - scr_h) // 2
+        frame = frame[sy:sy+scr_h, sx:sx+scr_w]
         h, w = frame.shape[:2]
+
         targets = self._targets
         if targets is not None:
             for t in targets.targets:
