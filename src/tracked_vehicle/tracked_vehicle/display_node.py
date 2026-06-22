@@ -13,7 +13,7 @@ class DisplayNode(Node):
         self.target_dist = self.declare_parameter('target_dist', 2.0).value
         self.bbox_ref = self.declare_parameter('bbox_ref_width', 500.0).value
         self.bbox_ref_dist = self.declare_parameter('bbox_ref_dist', 2.0).value
-        self.rotate_deg = self.declare_parameter('rotate_deg', 90).value
+        self.rotate_deg = self.declare_parameter('rotate_deg', 0).value
         self._frame = None
         self._targets = None
         self._window = 'RDK X5 Tracker'
@@ -45,24 +45,16 @@ class DisplayNode(Node):
     def render(self):
         if self._frame is None:
             return
-        frame = self._rotate(self._frame.copy())
+        # 原始帧 (mipi_cam 已做 rotation=90, 输出 960x544)
+        frame = self._frame.copy()
+        orig_h, orig_w = frame.shape[:2]
 
-        # 缩放填充全屏 (1024x600), 居中裁切
-        scr_w, scr_h = 1024, 600
-        fh, fw = frame.shape[:2]
-        scale = max(scr_w / fw, scr_h / fh)
-        nw, nh = int(fw * scale), int(fh * scale)
-        frame = cv2.resize(frame, (nw, nh))
-        # 居中裁切
-        sx = (nw - scr_w) // 2
-        sy = (nh - scr_h) // 2
-        frame = frame[sy:sy+scr_h, sx:sx+scr_w]
-        h, w = frame.shape[:2]
-
+        # ── 先画检测框 (在原图坐标系) ─────────────────
         targets = self._targets
         if targets is not None:
             for t in targets.targets:
-                if t.type != 'person': continue
+                if t.type != 'person':
+                    continue
                 for roi in t.rois:
                     r = roi.rect
                     x1, y1 = int(r.x_offset), int(r.y_offset)
@@ -73,20 +65,42 @@ class DisplayNode(Node):
                     cv2.rectangle(frame, (x1, y1), (x2, y1 + head_h), (255, 255, 0), 2)
                     label = f'#{t.track_id} {dist:.1f}m'
                     cv2.rectangle(frame, (x1, y1 - 24), (x1 + 160, y1), (0, 255, 0), -1)
-                    cv2.putText(frame, label, (x1 + 4, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-                    cx, cy = w // 2, h // 2
-                    cv2.line(frame, (cx - 20, cy), (cx + 20, cy), (128, 128, 128), 1)
-                    cv2.line(frame, (cx, cy - 20), (cx, cy + 20), (128, 128, 128), 1)
+                    cv2.putText(frame, label, (x1 + 4, y1 - 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                    # 画面中心十字
+                    cx0, cy0 = orig_w // 2, orig_h // 2
+                    cv2.line(frame, (cx0 - 20, cy0), (cx0 + 20, cy0), (128, 128, 128), 1)
+                    cv2.line(frame, (cx0, cy0 - 20), (cx0, cy0 + 20), (128, 128, 128), 1)
+                    # 人框→中心偏移线
                     bx, by = x1 + int(r.width) // 2, y1 + int(r.height) // 2
-                    cv2.line(frame, (bx, by), (cx, cy), (255, 0, 255), 1)
-                    cv2.ellipse(frame, (cx, cy), (40, 40), 0, 0, 360, (100, 100, 100), 1)
+                    cv2.line(frame, (bx, by), (cx0, cy0), (255, 0, 255), 1)
+                    cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (100, 100, 100), 1)
+
+        # ── 可选旋转 ─────────────────────────────────
+        if self.rotate_deg:
+            frame = self._rotate(frame)
+
+        # ── 缩放填充全屏 ─────────────────────────────
+        scr_w, scr_h = 1024, 600
+        fh, fw = frame.shape[:2]
+        scale = max(scr_w / fw, scr_h / fh)
+        nw, nh = int(fw * scale), int(fh * scale)
+        frame = cv2.resize(frame, (nw, nh))
+        sx = (nw - scr_w) // 2
+        sy = (nh - scr_h) // 2
+        frame = frame[sy:sy+scr_h, sx:sx+scr_w]
+        h, w = frame.shape[:2]
+
+        # ── 状态条 ───────────────────────────────────
         status = 'NO PERSON'
         color = (0, 0, 255)
         if targets is not None and targets.targets:
             t0 = targets.targets[0]
             status = f'TRACK #{t0.track_id} | {targets.fps}FPS'
             color = (0, 255, 0)
-        cv2.putText(frame, status, (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.putText(frame, status, (10, h - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
         cv2.imshow(self._window, frame)
         cv2.waitKey(1)
 

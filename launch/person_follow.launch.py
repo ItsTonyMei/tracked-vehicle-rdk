@@ -62,7 +62,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'target_dist': target_dist,
-            'rotate_deg': 90,
+            'rotate_deg': 0,
         }],
     )
 
