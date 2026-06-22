@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-distScore 人体跟随 launch — 检测 + 距离估算 + MotorCmd 直驱
+distScore 人体跟随 launch — 相机(带旋转) + 检测 + 跟随 + 屏显
 
 流水线:
-  1. mono2d_body_detection (官方 launch, 含 mipi_cam + 编码 + 检测)
-  2. person_tracker (distScore 跟随算法 → MotorCmd → STM32)
+  1. hobot_shm (零拷贝共享内存)
+  2. mipi_cam (960×544, rotation=90, SC132GS calibration)
+  3. mono2d_body_detection_without_camera (检测, 无自带相机)
+  4. person_tracker (distScore → MotorCmd)
+  5. display_node (本地 HDMI 屏显)
 
 用法:
   ros2 launch tracked_vehicle person_follow.launch.py
-  ros2 launch tracked_vehicle person_follow.launch.py target_dist:=2.5 linear_kp:=300.0
 """
 
 import os
@@ -27,16 +29,58 @@ def generate_launch_description():
     angular_kp = LaunchConfiguration('angular_kp', default='2.5')
     max_lost_frames = LaunchConfiguration('max_lost_frames', default='10')
 
-    # ── 人体检测 (官方 launch, 含相机 + 编码) ─────────
-    mono2d_launch = IncludeLaunchDescription(
+    # ── 零拷贝共享内存 ────────────────────────────────
+    shm_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
-            get_package_share_directory('mono2d_body_detection'),
-            '/launch/mono2d_body_detection.launch.py',
+            get_package_share_directory('hobot_shm'),
+            '/launch/hobot_shm.launch.py',
+        ])
+    )
+
+    # ── 相机 (GS130W SC132GS, rotation=90) ────────────
+    cam_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            get_package_share_directory('mipi_cam'),
+            '/launch/mipi_cam.launch.py',
         ]),
         launch_arguments={
-            'kps_image_width': '960',
-            'kps_image_height': '544',
-            'mono2d_body_pub_topic': '/hobot_mono2d_body_detection',
+            'mipi_image_width': '960',
+            'mipi_image_height': '544',
+            'mipi_io_method': 'shared_mem',
+            'mipi_frame_ts_type': 'realtime',
+            'mipi_camera_calibration_file_path': 'sc132gs_calibration_90.yaml',
+            'mipi_rotation': '90.0',
+            'mipi_cal_rotation': '90.0',
+            'mipi_gdc_enable': 'True',
+            'mipi_out_format': 'nv12',
+            'log_level': 'warn',
+        }.items(),
+    )
+
+    # ── 人体检测 (无自带相机, 用上方 mipi_cam) ─────────
+    mono2d_node = Node(
+        package='mono2d_body_detection',
+        executable='mono2d_body_detection',
+        output='screen',
+        parameters=[{
+            'model_file_name': 'config/multitask_body_head_face_hand_kps_960x544.hbm',
+            'model_type': 0,
+            'ai_msg_pub_topic_name': '/hobot_mono2d_body_detection',
+        }],
+        arguments=['--ros-args', '--log-level', 'warn'],
+    )
+
+    # ── NV12→JPEG 编码 (给 display & web 用) ──────────
+    jpeg_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            get_package_share_directory('hobot_codec'),
+            '/launch/hobot_codec_encode.launch.py',
+        ]),
+        launch_arguments={
+            'codec_in_mode': 'shared_mem',
+            'codec_out_mode': 'ros',
+            'codec_sub_topic': '/hbmem_img',
+            'codec_pub_topic': '/image',
         }.items(),
     )
 
@@ -71,7 +115,10 @@ def generate_launch_description():
         DeclareLaunchArgument('linear_kp', default_value='400.0'),
         DeclareLaunchArgument('angular_kp', default_value='2.5'),
         DeclareLaunchArgument('max_lost_frames', default_value='10'),
-        mono2d_launch,
+        shm_launch,
+        cam_launch,
+        jpeg_launch,
+        mono2d_node,
         tracker_node,
         display_node,
     ])
