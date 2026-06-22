@@ -1,11 +1,40 @@
 #!/usr/bin/env python3
-"""本地屏显 - 订阅 CompressedImage (JPEG) + 检测结果"""
+"""本地屏显 — 触摸点选追踪 + 骨骼可视化 + 隐藏光标"""
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from ai_msgs.msg import PerceptionTargets
 import cv2
 import numpy as np
+import os
+
+# COCO 骨骼连接 + 关键点颜色
+SKELETON = [(5,6),(5,7),(7,9),(6,8),(8,10),(11,12),
+            (11,13),(13,15),(12,14),(14,16),(0,1),(0,2),(1,3),(2,4)]
+KP_COLORS = [(255,0,0),(255,85,0),(255,170,0),(255,255,0),
+             (170,255,0),(85,255,0),(0,255,0),(0,255,85),
+             (0,255,170),(0,255,255),(0,170,255),(0,85,255),
+             (0,0,255),(85,0,255),(170,0,255),(255,0,255),(255,0,170),(255,0,85)]
+
+
+def hide_cursor():
+    """隐藏 X11 光标 (保留点击功能)"""
+    try:
+        # 创建 1x1 透明光标
+        os.system('xsetroot -cursor /dev/null 2>/dev/null || true')
+        # 备选: 用 X11 创建空光标
+        os.popen('python3 -c "'
+            'from ctypes import cdll, c_char_p;'
+            'x11=cdll.LoadLibrary(\"libX11.so.6\");'
+            'd=x11.XOpenDisplay(None);'
+            'w=x11.XDefaultRootWindow(d);'
+            'bm=x11.XCreateBitmapFromData(d,w,c_char_p(bytes(8)),1,1);'
+            'c=x11.XCreatePixmapCursor(d,bm,bm,0,0,0,0);'
+            'x11.XDefineCursor(d,w,c);'
+            'x11.XFlush(d)" 2>/dev/null || true')
+    except Exception:
+        pass
+
 
 class DisplayNode(Node):
     def __init__(self):
@@ -14,8 +43,11 @@ class DisplayNode(Node):
         self.bbox_ref = self.declare_parameter('bbox_ref_width', 500.0).value
         self.bbox_ref_dist = self.declare_parameter('bbox_ref_dist', 2.0).value
         self.rotate_deg = self.declare_parameter('rotate_deg', 0).value
+
         self._frame = None
         self._targets = None
+        self._selected_id = None   # 被点选的目标 track_id
+        self._dbl_click_ts = 0.0   # 双击检测时间戳
         self._window = 'RDK X5 Tracker'
         self._init_display()
 
@@ -24,7 +56,9 @@ class DisplayNode(Node):
         cv2.resizeWindow(self._window, 1024, 600)
         cv2.moveWindow(self._window, 0, 0)
         cv2.setWindowProperty(self._window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        self.get_logger().info(f'display_node OK (rotate={self.rotate_deg}deg)')
+        cv2.setMouseCallback(self._window, self._on_mouse)
+        hide_cursor()
+        self.get_logger().info('display_node OK (touch select enabled)')
 
     def img_cb(self, msg: CompressedImage):
         raw = np.frombuffer(msg.data, dtype=np.uint8)
@@ -36,35 +70,67 @@ class DisplayNode(Node):
     def _rotate(self, img):
         if self.rotate_deg == 90:
             return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-        elif self.rotate_deg == 270 or self.rotate_deg == -90:
+        elif self.rotate_deg in (270, -90):
             return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
         elif self.rotate_deg == 180:
             return cv2.rotate(img, cv2.ROTATE_180)
         return img
 
+    # ── 坐标变换: 屏幕 → 原图 ─────────────────────────
+    def _screen_to_orig(self, sx, sy):
+        """将 1024x600 屏幕坐标映射回原始 960x544 图像坐标"""
+        scr_w, scr_h = 1024, 600
+        fh, fw = self._frame.shape[:2]
+        scale = max(scr_w / fw, scr_h / fh)
+        nw, nh = int(fw * scale), int(fh * scale)
+        # 逆裁切
+        sx_full = sx + (nw - scr_w) // 2
+        sy_full = sy + (nh - scr_h) // 2
+        # 逆缩放
+        ox = int(sx_full / scale)
+        oy = int(sy_full / scale)
+        return ox, oy
+
+    def _find_person_at(self, ox, oy):
+        """查找坐标 (原图系) 处的人体框"""
+        if self._targets is None:
+            return None
+        for t in self._targets.targets:
+            if t.type != 'person':
+                continue
+            for roi in t.rois:
+                if roi.type != 'body':
+                    continue
+                r = roi.rect
+                if (r.x_offset <= ox <= r.x_offset + r.width and
+                    r.y_offset <= oy <= r.y_offset + r.height):
+                    return t
+        return None
+
+    # ── 鼠标/触摸回调 ─────────────────────────────────
+    def _on_mouse(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDBLCLK:
+            ox, oy = self._screen_to_orig(x, y)
+            person = self._find_person_at(ox, oy)
+            if person is not None:
+                self._selected_id = person.track_id
+                self.get_logger().info(f'SELECTED track_id={person.track_id}')
+            else:
+                self._selected_id = None
+                self.get_logger().info('DESELECTED')
+
+    # ── 渲染 ──────────────────────────────────────────
     def render(self):
         if self._frame is None:
             return
-        # 原始帧 (mipi_cam 已做 rotation=90, 输出 960x544)
         frame = self._frame.copy()
         orig_h, orig_w = frame.shape[:2]
-
-        # ── 先画检测与骨骼 (在原图坐标系) ─────────────
-        SKELETON = [(5,6),(5,7),(7,9),(6,8),(8,10),(11,12),
-                     (11,13),(13,15),(12,14),(14,16),(0,1),(0,2),
-                     (1,3),(2,4)]  # COCO 骨骼连接
-        KP_COLORS = [(255,0,0),(255,85,0),(255,170,0),(255,255,0),
-                     (170,255,0),(85,255,0),(0,255,0),(0,255,85),
-                     (0,255,170),(0,255,255),(0,170,255),(0,85,255),
-                     (0,0,255),(85,0,255),(170,0,255),(255,0,255),
-                     (255,0,170),(255,0,85)]
 
         targets = self._targets
         if targets is not None:
             for t in targets.targets:
                 if t.type != 'person':
                     continue
-                # 取 body ROI
                 body_roi = None
                 for roi in t.rois:
                     if roi.type == 'body':
@@ -78,10 +144,12 @@ class DisplayNode(Node):
                 x2, y2 = x1 + int(r.width), y1 + int(r.height)
                 dist = (self.bbox_ref * self.bbox_ref_dist) / r.width if r.width > 0 else 0
 
-                # 身体框 (绿色)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                # 框颜色: 选中=红, 未选中=绿
+                is_selected = (t.track_id == self._selected_id)
+                box_color = (0, 0, 255) if is_selected else (0, 255, 0)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3 if is_selected else 2)
 
-                # ── 骨骼关键点 body_kps ─────────────────
+                # 骨骼关键点
                 kps = None
                 for pt in t.points:
                     if pt.type == 'body_kps':
@@ -89,79 +157,72 @@ class DisplayNode(Node):
                         break
 
                 if kps and len(kps) >= 17:
-                    # 画骨骼连线
                     for i, j in SKELETON:
                         if i < len(kps) and j < len(kps):
                             cv2.line(frame, kps[i], kps[j], (0, 255, 255), 1)
-                    # 画关键点 (用渐变色)
                     for idx, (kx, ky) in enumerate(kps[:17]):
                         color = KP_COLORS[min(idx, len(KP_COLORS)-1)]
                         cv2.circle(frame, (kx, ky), 3, color, -1)
-
-                    # 头部中心 = 鼻尖 (kps[0]), 半径 = 眼距 / 2
                     nose = kps[0]
                     eye_dist = abs(kps[1][0] - kps[2][0]) if len(kps) > 2 else 20
                     head_r = max(int(eye_dist * 0.6), 15)
                     cv2.circle(frame, nose, head_r, (0, 255, 255), 2)
                 else:
-                    # 无关键点时回退: head ROI 或 body 上 1/3
                     head_roi = None
                     for roi in t.rois:
                         if roi.type == 'head':
                             head_roi = roi.rect
                             break
-                    if head_roi:
-                        hx1, hy1 = int(head_roi.x_offset), int(head_roi.y_offset)
-                        hx2, hy2 = hx1 + int(head_roi.width), hy1 + int(head_roi.height)
-                    else:
-                        hx1, hy1 = x1, y1
-                        hx2, hy2 = x2, y1 + (y2 - y1) // 3
+                    hx1, hy1 = (int(head_roi.x_offset), int(head_roi.y_offset)) if head_roi else (x1, y1)
+                    hx2, hy2 = (hx1 + int(head_roi.width), hy1 + int(head_roi.height)) if head_roi else (x2, y1 + (y2-y1)//3)
                     cv2.rectangle(frame, (hx1, hy1), (hx2, hy2), (255, 255, 0), 2)
 
                 # 标签
-                label = f'#{t.track_id} {dist:.1f}m'
-                cv2.rectangle(frame, (x1, y1 - 24), (x1 + 160, y1), (0, 255, 0), -1)
+                prefix = '>> ' if is_selected else ''
+                label = f'{prefix}#{t.track_id} {dist:.1f}m'
+                cv2.rectangle(frame, (x1, y1 - 24), (x1 + 200, y1), box_color, -1)
                 cv2.putText(frame, label, (x1 + 4, y1 - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-                # 人体中心→画面中心偏移线
-                bx, by = x1 + int(r.width) // 2, y1 + int(r.height) // 2
+                # 偏移线
+                bx, by = x1 + int(r.width)//2, y1 + int(r.height)//2
                 cv2.line(frame, (bx, by), (orig_w//2, orig_h//2), (255, 0, 255), 1)
 
-        # ── 画面中心十字 + 死区 (固定, 只画一次) ─────
-        if self._frame is not None:
-            cx0, cy0 = orig_w // 2, orig_h // 2
-            cv2.line(frame, (cx0 - 20, cy0), (cx0 + 20, cy0), (128, 128, 128), 1)
-            cv2.line(frame, (cx0, cy0 - 20), (cx0, cy0 + 20), (128, 128, 128), 1)
-            cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (100, 100, 100), 1)
+        # 中心十字 + 死区
+        cx0, cy0 = orig_w // 2, orig_h // 2
+        cv2.line(frame, (cx0 - 20, cy0), (cx0 + 20, cy0), (128, 128, 128), 1)
+        cv2.line(frame, (cx0, cy0 - 20), (cx0, cy0 + 20), (128, 128, 128), 1)
+        cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (100, 100, 100), 1)
 
-        # ── 可选旋转 ─────────────────────────────────
+        # 旋转
         if self.rotate_deg:
             frame = self._rotate(frame)
 
-        # ── 缩放填充全屏 ─────────────────────────────
+        # 缩放填充全屏
         scr_w, scr_h = 1024, 600
         fh, fw = frame.shape[:2]
         scale = max(scr_w / fw, scr_h / fh)
         nw, nh = int(fw * scale), int(fh * scale)
         frame = cv2.resize(frame, (nw, nh))
-        sx = (nw - scr_w) // 2
-        sy = (nh - scr_h) // 2
+        sx, sy = (nw - scr_w)//2, (nh - scr_h)//2
         frame = frame[sy:sy+scr_h, sx:sx+scr_w]
         h, w = frame.shape[:2]
 
-        # ── 状态条 ───────────────────────────────────
-        status = 'NO PERSON'
-        color = (0, 0, 255)
-        if targets is not None and targets.targets:
+        # 状态条
+        if targets and targets.targets:
             t0 = targets.targets[0]
-            status = f'TRACK #{t0.track_id} | {targets.fps}FPS'
+            sel = f' | SELECTED #{self._selected_id}' if self._selected_id else ''
+            status = f'TRACK #{t0.track_id}{sel} | {targets.fps}FPS | dbl-click to select'
             color = (0, 255, 0)
+        else:
+            status = 'NO PERSON | dbl-click to select'
+            color = (0, 0, 255)
         cv2.putText(frame, status, (10, h - 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
         cv2.imshow(self._window, frame)
         cv2.waitKey(1)
+
 
 def main():
     rclpy.init()
