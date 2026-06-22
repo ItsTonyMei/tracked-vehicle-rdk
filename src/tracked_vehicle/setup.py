@@ -30,6 +30,7 @@ setup(
         'console_scripts': [
             'cmd_vel_bridge = tracked_vehicle.cmd_vel_bridge:main',
             'person_tracker = tracked_vehicle.person_tracker:main',
+            'display_node = tracked_vehicle.display_node:main',
         ],
     },
 )

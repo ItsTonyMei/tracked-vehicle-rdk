@@ -54,6 +54,17 @@ def generate_launch_description():
         }],
     )
 
+    # ── 本地屏显 ──────────────────────────────────────
+    display_node = Node(
+        package='tracked_vehicle',
+        executable='display_node',
+        name='display_node',
+        output='screen',
+        parameters=[{
+            'target_dist': target_dist,
+        }],
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument('target_dist', default_value='2.0'),
         DeclareLaunchArgument('linear_kp', default_value='400.0'),
@@ -61,4 +72,5 @@ def generate_launch_description():
         DeclareLaunchArgument('max_lost_frames', default_value='10'),
         mono2d_launch,
         tracker_node,
+        display_node,
     ])
