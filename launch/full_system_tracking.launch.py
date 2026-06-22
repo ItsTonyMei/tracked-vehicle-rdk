@@ -23,7 +23,7 @@ from ament_index_python import get_package_share_directory
 
 def generate_launch_description():
     # ── 参数 ──────────────────────────────────────────────
-    serial_port = LaunchConfiguration('serial_port', default='/dev/ttyUSB0')
+    serial_port = LaunchConfiguration('serial_port', default='/dev/stm32_board')
     linear_gain = LaunchConfiguration('linear_gain', default='500.0')
     angular_gain = LaunchConfiguration('angular_gain', default='300.0')
     cmd_timeout = LaunchConfiguration('cmd_timeout_s', default='60.0')
@@ -59,7 +59,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        DeclareLaunchArgument('serial_port', default_value='/dev/ttyUSB0'),
+        DeclareLaunchArgument('serial_port', default_value='/dev/stm32_board'),
         DeclareLaunchArgument('linear_gain', default_value='500.0'),
         DeclareLaunchArgument('angular_gain', default_value='300.0'),
         DeclareLaunchArgument('cmd_timeout_s', default_value='60.0'),

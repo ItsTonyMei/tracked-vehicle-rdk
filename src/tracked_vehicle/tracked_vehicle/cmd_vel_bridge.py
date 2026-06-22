@@ -32,7 +32,7 @@ class CmdVelBridge(Node):
         super().__init__('cmd_vel_bridge')
 
         # 串口配置
-        port = self.declare_parameter('serial_port', '/dev/ttyUSB0').value
+        port = self.declare_parameter('serial_port', '/dev/stm32_board').value
         baud = self.declare_parameter('serial_baud', 115200).value
 
         # 速度 → PWM 映射参数

@@ -8,7 +8,7 @@ cmd_vel → MotorCmd 串口桥接 launch
   ros2 launch tracked_vehicle motor_bridge.launch.py serial_port:=/dev/ttyUSB1 linear_gain:=400.0
 
 参数:
-  serial_port      — 串口设备路径 (默认 /dev/ttyUSB0, CH340N)
+  serial_port      — 串口设备路径 (默认 /dev/stm32_board, CH340N)
   serial_baud      — 波特率 (默认 115200)
   linear_gain      — 线速度→PWM 比例 (默认 500, 1m/s→±500μs)
   angular_gain     — 角速度→PWM 比例 (默认 300, 1rad/s→±300μs)
@@ -23,7 +23,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('serial_port', default_value='/dev/ttyUSB0'),
+        DeclareLaunchArgument('serial_port', default_value='/dev/stm32_board'),
         DeclareLaunchArgument('serial_baud', default_value='115200'),
         DeclareLaunchArgument('linear_gain', default_value='500.0'),
         DeclareLaunchArgument('angular_gain', default_value='300.0'),
