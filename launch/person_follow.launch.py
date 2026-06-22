@@ -57,7 +57,7 @@ def generate_launch_description():
         }.items(),
     )
 
-    # ── 人体检测 (无自带相机, 用上方 mipi_cam) ─────────
+    # ── 人体检测 ──────────────────────────────────────
     mono2d_node = Node(
         package='mono2d_body_detection',
         executable='mono2d_body_detection',
@@ -68,6 +68,22 @@ def generate_launch_description():
             'ai_msg_pub_topic_name': '/hobot_mono2d_body_detection',
         }],
         arguments=['--ros-args', '--log-level', 'warn'],
+    )
+
+    # ── ReID 行人重识别 (跨时间保持ID) ────────────────
+    reid_node = Node(
+        package='reid',
+        executable='reid',
+        output='screen',
+        parameters=[{
+            'is_sync_mode': 1,
+            'feed_type': 1,
+            'model_file_name': 'config/reid.bin',
+            'threshold': 0.70,
+            'ai_msg_pub_topic_name': '/perception/detection/reid',
+            'ai_msg_sub_topic_name': '/hobot_mono2d_body_detection',
+        }],
+        arguments=['--ros-args', '--log-level', 'info'],
     )
 
     # ── NV12→JPEG 编码 (给 display & web 用) ──────────
@@ -119,6 +135,7 @@ def generate_launch_description():
         cam_launch,
         jpeg_launch,
         mono2d_node,
+        reid_node,
         tracker_node,
         display_node,
     ])

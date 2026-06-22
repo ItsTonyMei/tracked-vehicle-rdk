@@ -172,7 +172,7 @@ def main():
     rclpy.init()
     node = DisplayNode()
     node.sub_img = node.create_subscription(CompressedImage, '/image', node.img_cb, 10)
-    node.sub_det = node.create_subscription(PerceptionTargets, '/hobot_mono2d_body_detection', node.det_cb, 10)
+    node.sub_det = node.create_subscription(PerceptionTargets, '/perception/detection/reid', node.det_cb, 10)
     node.timer = node.create_timer(0.05, node.render)
     rclpy.spin(node)
     rclpy.shutdown()

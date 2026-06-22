@@ -88,7 +88,7 @@ class PersonTracker(Node):
         # ── 订阅人检测 ────────────────────────────────
         self.sub = self.create_subscription(
             PerceptionTargets,
-            '/hobot_mono2d_body_detection',
+            '/perception/detection/reid',
             self.detection_cb,
             10)
 
