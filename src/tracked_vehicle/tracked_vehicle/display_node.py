@@ -49,20 +49,27 @@ class DisplayNode(Node):
         frame = self._frame.copy()
         orig_h, orig_w = frame.shape[:2]
 
-        # ── 先画检测框 (在原图坐标系) ─────────────────
+        # ── 先画检测与骨骼 (在原图坐标系) ─────────────
+        SKELETON = [(5,6),(5,7),(7,9),(6,8),(8,10),(11,12),
+                     (11,13),(13,15),(12,14),(14,16),(0,1),(0,2),
+                     (1,3),(2,4)]  # COCO 骨骼连接
+        KP_COLORS = [(255,0,0),(255,85,0),(255,170,0),(255,255,0),
+                     (170,255,0),(85,255,0),(0,255,0),(0,255,85),
+                     (0,255,170),(0,255,255),(0,170,255),(0,85,255),
+                     (0,0,255),(85,0,255),(170,0,255),(255,0,255),
+                     (255,0,170),(255,0,85)]
+
         targets = self._targets
         if targets is not None:
             for t in targets.targets:
                 if t.type != 'person':
                     continue
-                # 收集各类型 ROI
-                body_roi = head_roi = None
+                # 取 body ROI
+                body_roi = None
                 for roi in t.rois:
                     if roi.type == 'body':
                         body_roi = roi.rect
-                    elif roi.type == 'head':
-                        head_roi = roi.rect
-
+                        break
                 if body_roi is None:
                     continue
 
@@ -74,14 +81,42 @@ class DisplayNode(Node):
                 # 身体框 (绿色)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-                # 头部框: 优先用模型检测的 head ROI, 否则用 body 上 1/3 估算
-                if head_roi is not None:
-                    hx1, hy1 = int(head_roi.x_offset), int(head_roi.y_offset)
-                    hx2, hy2 = hx1 + int(head_roi.width), hy1 + int(head_roi.height)
+                # ── 骨骼关键点 body_kps ─────────────────
+                kps = None
+                for pt in t.points:
+                    if pt.type == 'body_kps':
+                        kps = [(int(p.x), int(p.y)) for p in pt.point]
+                        break
+
+                if kps and len(kps) >= 17:
+                    # 画骨骼连线
+                    for i, j in SKELETON:
+                        if i < len(kps) and j < len(kps):
+                            cv2.line(frame, kps[i], kps[j], (0, 255, 255), 1)
+                    # 画关键点 (用渐变色)
+                    for idx, (kx, ky) in enumerate(kps[:17]):
+                        color = KP_COLORS[min(idx, len(KP_COLORS)-1)]
+                        cv2.circle(frame, (kx, ky), 3, color, -1)
+
+                    # 头部中心 = 鼻尖 (kps[0]), 半径 = 眼距 / 2
+                    nose = kps[0]
+                    eye_dist = abs(kps[1][0] - kps[2][0]) if len(kps) > 2 else 20
+                    head_r = max(int(eye_dist * 0.6), 15)
+                    cv2.circle(frame, nose, head_r, (0, 255, 255), 2)
                 else:
-                    hx1, hy1 = x1, y1
-                    hx2, hy2 = x2, y1 + (y2 - y1) // 3
-                cv2.rectangle(frame, (hx1, hy1), (hx2, hy2), (255, 255, 0), 2)
+                    # 无关键点时回退: head ROI 或 body 上 1/3
+                    head_roi = None
+                    for roi in t.rois:
+                        if roi.type == 'head':
+                            head_roi = roi.rect
+                            break
+                    if head_roi:
+                        hx1, hy1 = int(head_roi.x_offset), int(head_roi.y_offset)
+                        hx2, hy2 = hx1 + int(head_roi.width), hy1 + int(head_roi.height)
+                    else:
+                        hx1, hy1 = x1, y1
+                        hx2, hy2 = x2, y1 + (y2 - y1) // 3
+                    cv2.rectangle(frame, (hx1, hy1), (hx2, hy2), (255, 255, 0), 2)
 
                 # 标签
                 label = f'#{t.track_id} {dist:.1f}m'
@@ -89,7 +124,7 @@ class DisplayNode(Node):
                 cv2.putText(frame, label, (x1 + 4, y1 - 6),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
 
-                # 人框→中心偏移线
+                # 人体中心→画面中心偏移线
                 bx, by = x1 + int(r.width) // 2, y1 + int(r.height) // 2
                 cv2.line(frame, (bx, by), (orig_w//2, orig_h//2), (255, 0, 255), 1)
 
