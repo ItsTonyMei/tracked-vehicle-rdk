@@ -13,7 +13,7 @@ class DisplayNode(Node):
         self.target_dist = self.declare_parameter('target_dist', 2.0).value
         self.bbox_ref = self.declare_parameter('bbox_ref_width', 500.0).value
         self.bbox_ref_dist = self.declare_parameter('bbox_ref_dist', 2.0).value
-        self.rotate_deg = self.declare_parameter('rotate_deg', 0).value
+        self.rotate_deg = self.declare_parameter('rotate_deg', 90).value
         self._frame = None
         self._targets = None
         self._window = 'RDK X5 Tracker'
@@ -21,8 +21,9 @@ class DisplayNode(Node):
 
     def _init_display(self):
         cv2.namedWindow(self._window, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(self._window, 1024, 600)
+        cv2.moveWindow(self._window, 0, 0)
         cv2.setWindowProperty(self._window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        cv2.setWindowProperty(self._window, cv2.WND_PROP_TOPMOST, 1)
         self.get_logger().info(f'display_node OK (rotate={self.rotate_deg}deg)')
 
     def img_cb(self, msg: CompressedImage):
