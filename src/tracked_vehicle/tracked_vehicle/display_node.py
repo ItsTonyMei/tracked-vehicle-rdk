@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""本地屏显 — 触摸点选追踪 + 骨骼可视化"""
+"""本地屏显 — 手势跟随画面"""
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from ai_msgs.msg import PerceptionTargets
 import cv2
 import numpy as np
-
 
 
 class DisplayNode(Node):
@@ -19,8 +18,6 @@ class DisplayNode(Node):
 
         self._frame = None
         self._targets = None
-        self._selected_id = None   # 被点选的目标 track_id
-        self._dbl_click_ts = 0.0   # 双击检测时间戳
         self._window = 'RDK X5 Tracker'
         self._init_display()
 
@@ -29,8 +26,7 @@ class DisplayNode(Node):
         cv2.resizeWindow(self._window, 1024, 600)
         cv2.moveWindow(self._window, 0, 0)
         cv2.setWindowProperty(self._window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        cv2.setMouseCallback(self._window, self._on_mouse)
-        self.get_logger().info('display_node OK (touch select enabled)')
+        self.get_logger().info('display_node OK')
 
     def img_cb(self, msg: CompressedImage):
         raw = np.frombuffer(msg.data, dtype=np.uint8)
@@ -48,50 +44,6 @@ class DisplayNode(Node):
             return cv2.rotate(img, cv2.ROTATE_180)
         return img
 
-    # ── 坐标变换: 屏幕 → 原图 ─────────────────────────
-    def _screen_to_orig(self, sx, sy):
-        """将 1024x600 屏幕坐标映射回原始 960x544 图像坐标"""
-        scr_w, scr_h = 1024, 600
-        fh, fw = self._frame.shape[:2]
-        scale = max(scr_w / fw, scr_h / fh)
-        nw, nh = int(fw * scale), int(fh * scale)
-        # 逆裁切
-        sx_full = sx + (nw - scr_w) // 2
-        sy_full = sy + (nh - scr_h) // 2
-        # 逆缩放
-        ox = int(sx_full / scale)
-        oy = int(sy_full / scale)
-        return ox, oy
-
-    def _find_person_at(self, ox, oy):
-        """查找坐标 (原图系) 处的人体框"""
-        if self._targets is None:
-            return None
-        for t in self._targets.targets:
-            if t.type != 'person':
-                continue
-            for roi in t.rois:
-                if roi.type != 'body':
-                    continue
-                r = roi.rect
-                if (r.x_offset <= ox <= r.x_offset + r.width and
-                    r.y_offset <= oy <= r.y_offset + r.height):
-                    return t
-        return None
-
-    # ── 鼠标/触摸回调 ─────────────────────────────────
-    def _on_mouse(self, event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDBLCLK:
-            ox, oy = self._screen_to_orig(x, y)
-            person = self._find_person_at(ox, oy)
-            if person is not None:
-                self._selected_id = person.track_id
-                self.get_logger().info(f'SELECTED track_id={person.track_id}')
-            else:
-                self._selected_id = None
-                self.get_logger().info('DESELECTED')
-
-    # ── 渲染 ──────────────────────────────────────────
     def render(self):
         if self._frame is None:
             return
@@ -116,19 +68,11 @@ class DisplayNode(Node):
                 x2, y2 = x1 + int(r.width), y1 + int(r.height)
                 dist = (self.bbox_ref * self.bbox_ref_dist) / r.width if r.width > 0 else 0
 
-                # 框颜色: 选中=红, 未选中=绿
-                is_selected = (t.track_id == self._selected_id)
-                box_color = (0, 0, 255) if is_selected else (0, 255, 0)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3 if is_selected else 2)
-
-                # 标签
-                prefix = '>> ' if is_selected else ''
-                label = f'{prefix}#{t.track_id} {dist:.1f}m'
-                cv2.rectangle(frame, (x1, y1 - 24), (x1 + 200, y1), box_color, -1)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                label = f'#{t.track_id} {dist:.1f}m'
+                cv2.rectangle(frame, (x1, y1 - 24), (x1 + 160, y1), (0, 255, 0), -1)
                 cv2.putText(frame, label, (x1 + 4, y1 - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-                # 偏移线
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
                 bx, by = x1 + int(r.width)//2, y1 + int(r.height)//2
                 cv2.line(frame, (bx, by), (orig_w//2, orig_h//2), (255, 0, 255), 1)
 
@@ -155,11 +99,10 @@ class DisplayNode(Node):
         # 状态条
         if targets and targets.targets:
             t0 = targets.targets[0]
-            sel = f' | SELECTED #{self._selected_id}' if self._selected_id else ''
-            status = f'TRACK #{t0.track_id}{sel} | {targets.fps}FPS | dbl-click to select'
+            status = f'TRACK #{t0.track_id} | {targets.fps}FPS | OK=wake Palm=stop'
             color = (0, 255, 0)
         else:
-            status = 'NO PERSON | dbl-click to select'
+            status = 'GESTURE: OK to wake | Palm to stop'
             color = (0, 0, 255)
         cv2.putText(frame, status, (10, h - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
@@ -172,7 +115,7 @@ def main():
     rclpy.init()
     node = DisplayNode()
     node.sub_img = node.create_subscription(CompressedImage, '/image', node.img_cb, 10)
-    node.sub_det = node.create_subscription(PerceptionTargets, '/perception/detection/reid', node.det_cb, 10)
+    node.sub_det = node.create_subscription(PerceptionTargets, '/hobot_mono2d_body_detection', node.det_cb, 10)
     node.timer = node.create_timer(0.05, node.render)
     rclpy.spin(node)
     rclpy.shutdown()
