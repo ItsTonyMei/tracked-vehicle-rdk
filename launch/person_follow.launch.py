@@ -100,6 +100,18 @@ def generate_launch_description():
         }.items(),
     )
 
+    # ── Web 可视化 ────────────────────────────────────
+    web_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            get_package_share_directory('websocket'),
+            '/launch/websocket.launch.py',
+        ]),
+        launch_arguments={
+            'websocket_image_topic': '/image',
+            'websocket_smart_topic': '/perception/detection/reid',
+        }.items(),
+    )
+
     # ── distScore 跟随节点 ────────────────────────────
     tracker_node = Node(
         package='tracked_vehicle',
@@ -136,6 +148,7 @@ def generate_launch_description():
         jpeg_launch,
         mono2d_node,
         reid_node,
+        web_launch,
         tracker_node,
         display_node,
     ])
