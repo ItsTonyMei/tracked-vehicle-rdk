@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - 2026-06-22
+
+### Added
+- **distScore 人体跟随节点** — `person_tracker.py`
+  - bbox 宽度反比距离估算 (人体肩宽 ~0.5m 恒定)
+  - 比例控制: dist_error → throttle, center_error → steering
+  - 直接输出 MotorCmd (绕过 /cmd_vel)
+  - 目标丢失保持 (max_lost_frames) + 60s 安全超时
+- `launch/person_follow.launch.py` — 检测 + distScore 跟随一键启动
+
 ## [0.3.0] - 2026-06-19
 
 ### Added

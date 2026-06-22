@@ -354,7 +354,7 @@ python3 -m pytest test_vis_parser.py
   - [x] 双目深度 (StereoNet V2.4_int8 @ 21 FPS)
   - [x] 人体检测+跟踪 (Body Tracking @ 60 FPS)
   - [x] cmd_vel → MotorCmd 串口桥接
-- [ ] M5：跟随算法移植（distScore 双目版 → MotorCmd）
+- [x] M5：跟随算法移植（distScore → MotorCmd）✅ 2026-06-22
 - [ ] M6：传感器逐一接入（激光雷达、语音、后视）
 - [ ] M7：全系统联调与安全验收
 - [ ] M8：场地实车测试
