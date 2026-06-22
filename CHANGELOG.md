@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-06-22
+
+### Added
+- **手势唤醒跟随** — OK 锁定 / Palm 解除
+  - `display_node` 订阅 `/hobot_hand_gesture_detection`, 投票防抖 30帧
+  - OK(14)→锁定画面最大面积人体, 红框粗线标识; Palm(5)→解除
+  - 3s冷却 + 未锁定忽略Palm, 防误触发
+- **屏显系统** — HDMI 本地显示全链路
+  - OpenCV 全屏渲染 (1024×600), 缩放+居中裁切
+  - 人体框(绿/红) + track_id + 距离标签 + 偏移线 + 中心十字
+  - 裸 Xorg `-nocursor` 隐藏光标
+- **systemd 开机自启** — `tracked-vehicle-display.service`
+  - BPU 就绪等待 + Xorg 启动 + ROS2 全系统 launch
+  - lightdm 已禁用
+
+### Changed
+- 精简为官方 body_tracking (手势版) 10节点: shm→cam→jpeg→mono2d→lmk→gesture→track→bridge→display→web
+- mipi_cam 显式传 rotation=90 (GS130W SC132GS 竖屏传感器适配)
+- 串口名固定为 `/dev/stm32_board` (udev规则)
+
+### Fixed
+- README 代码块完整性: 修复架构图未关闭 ``` 导致目录树渲染错乱
+- 屏显方向: 先画框再缩放, 保持坐标系一致
+- 相机旋转: 手动启动组件链确保 rotation=90 正确传递
+
+### Verified
+- 10节点全链路稳定运行: 相机→检测→手势→跟随→桥接→屏显→Web
+- STM32 安全门控: X5指令需 autoMode && g_motorArmed
+- 方向映射: angular.z 符号修正, 匹配坦克混控
+
 ## [0.4.0] - 2026-06-22
 
 ### Added

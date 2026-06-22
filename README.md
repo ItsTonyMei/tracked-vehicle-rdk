@@ -327,6 +327,7 @@ ros2 launch tracked_vehicle motor_bridge.launch.py
 | [docs/hardware-setup.md](./docs/hardware-setup.md) | ✅ 硬件连线与接口对表 |
 | [docs/protocol-spec.md](./docs/protocol-spec.md) | ✅ 通信协议完整定义 |
 | [docs/stereo-vision-verification.md](./docs/stereo-vision-verification.md) | ✅ 双目视觉验证报告 |
+| [docs/lessons-learned.md](./docs/lessons-learned.md) | ✅ 踩坑经验记录 (13条) |
 | [docs/ROS-ExpansionboardV3.0-en-new-20250509.pdf](./docs/ROS-ExpansionboardV3.0-en-new-20250509.pdf) | ✅ STM32 扩展板手册 |
 | [docs/architecture.md](./docs/architecture.md) | ⬜ 系统架构详细设计 |
 | [docs/migration-plan.md](./docs/migration-plan.md) | ⬜ ESP32→X5 分阶段迁移计划 |
@@ -350,11 +351,15 @@ python3 -m pytest test_vis_parser.py
 - [x] M1：硬件选型与采购
 - [x] M2：目录结构与项目骨架
 - [x] M3：STM32 固件适配（SBUS + MotorCmd 双源）✅
-- [x] M4：RDK X5 视觉验证
+- [x] M4：RDK X5 视觉验证 ✅
   - [x] 双目深度 (StereoNet V2.4_int8 @ 21 FPS)
-  - [x] 人体检测+跟踪 (Body Tracking @ 60 FPS)
+  - [x] 人体检测+手势 (Body+Hand @ 60 FPS)
   - [x] cmd_vel → MotorCmd 串口桥接
-- [x] M5：跟随算法移植（distScore → MotorCmd）✅ 2026-06-22
+- [x] M5：跟随系统 ✅
+  - [x] distScore 跟随算法
+  - [x] 手势唤醒 (OK=锁定, Palm=解除)
+  - [x] HDMI 本地屏显 (1024×600 全屏)
+  - [x] systemd 开机自启
 - [ ] M6：传感器逐一接入（激光雷达、语音、后视）
 - [ ] M7：全系统联调与安全验收
 - [ ] M8：场地实车测试
