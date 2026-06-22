@@ -468,8 +468,8 @@ void loop() {
             str = sbusToPwm(g_sbus.channels[SBUS_CH_STEERING], SBUS_STR_SENSITIVITY);
             g_lastCmdMs = now;
 
-        } else if (g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS)) {
-            // 自动模式 或 SBUS 未解锁: X5 指令生效
+        } else if (autoMode && g_motorArmed && g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS)) {
+            // 自动模式 + 已解锁: X5 指令生效 (需遥控器 CH5=ARM + CH6=AUTO)
             thr = g_x5Throttle;
             str = g_x5Steering;
             g_lastCmdMs = now;

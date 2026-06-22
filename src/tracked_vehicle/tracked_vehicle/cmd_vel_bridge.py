@@ -62,7 +62,8 @@ class CmdVelBridge(Node):
         self.last_cmd_time = self.get_clock().now()
 
         throttle = self.pwm_center + int(msg.linear.x * self.linear_gain)
-        steering = self.pwm_center + int(msg.angular.z * self.angular_gain)
+        # 符号取反: angular.z>0 (ROS左转) → steering<1500 → sOff<0 → 左电机慢右电机快 → 左转
+        steering = self.pwm_center - int(msg.angular.z * self.angular_gain)
 
         throttle = max(self.pwm_min, min(self.pwm_max, throttle))
         steering = max(self.pwm_min, min(self.pwm_max, steering))
