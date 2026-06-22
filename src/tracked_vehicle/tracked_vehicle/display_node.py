@@ -7,13 +7,6 @@ from ai_msgs.msg import PerceptionTargets
 import cv2
 import numpy as np
 
-# COCO 骨骼连接 + 关键点颜色
-SKELETON = [(5,6),(5,7),(7,9),(6,8),(8,10),(11,12),
-            (11,13),(13,15),(12,14),(14,16),(0,1),(0,2),(1,3),(2,4)]
-KP_COLORS = [(255,0,0),(255,85,0),(255,170,0),(255,255,0),
-             (170,255,0),(85,255,0),(0,255,0),(0,255,85),
-             (0,255,170),(0,255,255),(0,170,255),(0,85,255),
-             (0,0,255),(85,0,255),(170,0,255),(255,0,255),(255,0,170),(255,0,85)]
 
 
 class DisplayNode(Node):
@@ -127,34 +120,6 @@ class DisplayNode(Node):
                 is_selected = (t.track_id == self._selected_id)
                 box_color = (0, 0, 255) if is_selected else (0, 255, 0)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3 if is_selected else 2)
-
-                # 骨骼关键点
-                kps = None
-                for pt in t.points:
-                    if pt.type == 'body_kps':
-                        kps = [(int(p.x), int(p.y)) for p in pt.point]
-                        break
-
-                if kps and len(kps) >= 17:
-                    for i, j in SKELETON:
-                        if i < len(kps) and j < len(kps):
-                            cv2.line(frame, kps[i], kps[j], (0, 255, 255), 1)
-                    for idx, (kx, ky) in enumerate(kps[:17]):
-                        color = KP_COLORS[min(idx, len(KP_COLORS)-1)]
-                        cv2.circle(frame, (kx, ky), 3, color, -1)
-                    nose = kps[0]
-                    eye_dist = abs(kps[1][0] - kps[2][0]) if len(kps) > 2 else 20
-                    head_r = max(int(eye_dist * 0.6), 15)
-                    cv2.circle(frame, nose, head_r, (0, 255, 255), 2)
-                else:
-                    head_roi = None
-                    for roi in t.rois:
-                        if roi.type == 'head':
-                            head_roi = roi.rect
-                            break
-                    hx1, hy1 = (int(head_roi.x_offset), int(head_roi.y_offset)) if head_roi else (x1, y1)
-                    hx2, hy2 = (hx1 + int(head_roi.width), hy1 + int(head_roi.height)) if head_roi else (x2, y1 + (y2-y1)//3)
-                    cv2.rectangle(frame, (hx1, hy1), (hx2, hy2), (255, 255, 0), 2)
 
                 # 标签
                 prefix = '>> ' if is_selected else ''
