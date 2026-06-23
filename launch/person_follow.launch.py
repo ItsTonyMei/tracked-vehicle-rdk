@@ -96,17 +96,15 @@ def generate_launch_description():
         }.items())
 
     # ── 9. cmd_vel → MotorCmd ─────────────────────────
-    bridge = Node(package='tracked_vehicle', executable='cmd_vel_bridge',
-        name='cmd_vel_bridge', output='screen',
-        parameters=[{'serial_port': '/dev/stm32_board', 'serial_baud': 115200,
-                     'linear_gain': 500.0, 'angular_gain': 300.0, 'cmd_timeout_s': 60.0}])
+    bridge = IncludeLaunchDescription(PythonLaunchDescriptionSource([
+        get_package_share_directory('tracked_vehicle'),
+        '/launch/motor_bridge.launch.py']))
 
     # ── 10. 屏显 ──────────────────────────────────────
     display = Node(package='tracked_vehicle', executable='display_node',
         name='display_node', output='screen',
-        parameters=[{'target_dist': target_dist, 'rotate_deg': 0}])
+        parameters=[{'rotate_deg': 0}])
 
     return LaunchDescription([
-        DeclareLaunchArgument('target_dist', default_value='2.0'),
         shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, web, bridge, display,
     ])

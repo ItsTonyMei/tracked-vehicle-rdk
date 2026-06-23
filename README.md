@@ -162,11 +162,11 @@ tracked-vehicle-rdk/
 ├── launch/                           # 🚀 ROS2 launch 文件
 │   ├── stereo_vision.launch.py       #    ✅ 双目采集 + StereoNet 深度图
 │   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
-│   ├── full_system_tracking.launch.py#    ✅ 人体跟随 + 桥接一键启动
+│   ├── full_system_tracking.launch.py#    ✅ (已合并到 person_follow)
 │   ├── person_follow.launch.py       #    ✅ 手势唤醒人体跟随
 │   └── full_system.launch.py         #    ⬜ 全传感器一键全系统启动
 │
-├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.3.0)
+├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.5.0)
 │   ├── setup.py                      #    ✅ colcon 构建配置
 │   ├── setup.cfg                     #    ✅ 可执行文件路径
 │   ├── package.xml                   #    ✅ ROS2 依赖声明
@@ -175,10 +175,10 @@ tracked-vehicle-rdk/
 │   │   ├── __init__.py               #    ✅ 包初始化
 │   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接
 │   │   ├── follow_logic.py           #    ⬜ distScore 跟随算法 (移植ESP32)
-│   │   ├── person_tracker.py         #    ✅ distScore 跟随 (已集成到 body_tracking)
+│   │   ├── person_tracker.py         #    ✅ (已集成到 body_tracking, 文件已移除)
 │   │   └── ...                       #    ⬜ 更多感知与控制模块
 │   └── scripts/                      # 🔧 工具脚本
-│       └── camera_info_repub.py      #    ✅ camera_info 尺寸缩放
+│       └── camera_info_repub.py  (已移除, stereonet 内部处理)      #    ✅ camera_info 尺寸缩放
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交)
 ├── stm32_firmware/                   # 🔩 STM32 扩展板固件 ✅
@@ -298,12 +298,9 @@ cd ~/Desktop/tracked-vehicle-rdk
 colcon build --packages-select tracked_vehicle
 source install/setup.bash
 
-# 一键启动: 人体检测 + 跟随策略 + 串口桥接
+# 一键启动: 手势唤醒人体跟随 (OK=锁定, Palm=解除)
 # (STM32 需通过 Micro USB 连接到 RDK X5 的 USB 口)
-ros2 launch tracked_vehicle full_system_tracking.launch.py
-
-# 若串口号不同
-ros2 launch tracked_vehicle full_system_tracking.launch.py serial_port:=/dev/ttyUSB1
+ros2 launch tracked_vehicle person_follow.launch.py
 ```
 
 Web 可视化: `http://<RDK_IP>:8000`

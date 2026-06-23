@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - **手势唤醒跟随** — OK 锁定 / Palm 解除
   - `display_node` 订阅 `/hobot_hand_gesture_detection`, 投票防抖 30帧
-  - OK(14)→锁定画面最大面积人体, 红框粗线标识; Palm(5)→解除
+  - OK(11)→锁定画面最大面积人体, 红框粗线标识; Palm(5)→解除
   - 3s冷却 + 未锁定忽略Palm, 防误触发
 - **屏显系统** — HDMI 本地显示全链路
   - OpenCV 全屏渲染 (1024×600), 缩放+居中裁切

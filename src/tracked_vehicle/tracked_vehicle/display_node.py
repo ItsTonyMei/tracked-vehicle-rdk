@@ -11,7 +11,6 @@ import numpy as np
 class DisplayNode(Node):
     def __init__(self):
         super().__init__('display_node')
-        self.target_dist = self.declare_parameter('target_dist', 2.0).value
         self.bbox_ref = self.declare_parameter('bbox_ref_width', 500.0).value
         self.bbox_ref_dist = self.declare_parameter('bbox_ref_dist', 2.0).value
         self.rotate_deg = self.declare_parameter('rotate_deg', 0).value
@@ -21,7 +20,7 @@ class DisplayNode(Node):
         self._locked_id = None    # 手势锁定的 track_id
         self._gesture_ts = 0.0     # 手势时间戳
         self._gesture_votes = {}   # 手势投票 {code: count}
-        self._VOTE_THRESHOLD = 30  # 连续30帧相同手势才触发 (~0.5s)
+        self._VOTE_THRESHOLD = 30  # 连续30帧相同手势触发 (手势检测~60fps, 约0.5s)
         self._window = 'RDK X5 Tracker'
         self._init_display()
 
@@ -46,10 +45,13 @@ class DisplayNode(Node):
             for attr in t.attributes:
                 try:
                     code = int(attr.value)
-                except:
+                except (ValueError, TypeError):
                     continue
                 if code == 0:
-                    continue  # 无手势, 重置投票
+                    # 无手势时降级投票计数, 避免瞬间手势误触发
+                    for k in list(self._gesture_votes.keys()):
+                        self._gesture_votes[k] = max(0, self._gesture_votes[k] - 2)
+                    continue
                 self._gesture_votes[code] = self._gesture_votes.get(code, 0) + 1
                 # 重置其他手势计数
                 for k in list(self._gesture_votes.keys()):

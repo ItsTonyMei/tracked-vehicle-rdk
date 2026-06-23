@@ -17,7 +17,7 @@ import struct
 
 
 def crc8(data: bytes) -> int:
-    """CRC-8-MAXIM (poly=0x07, init=0x00)"""
+    """CRC-8 (poly=0x07, init=0x00, 与 STM32 固件一致)"""
     crc = 0
     for b in data:
         crc ^= b
