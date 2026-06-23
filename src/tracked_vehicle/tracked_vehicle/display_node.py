@@ -61,7 +61,7 @@ class DisplayNode(Node):
                     self._gesture_votes.clear()
                     if now - self._gesture_ts < 3.0:  # 3s 冷却
                         return
-                    if code == 14:  # OK
+                    if code == 11:  # OK
                         self._on_ok(now)
                     elif code == 5:  # Palm
                         self._on_palm(now)
