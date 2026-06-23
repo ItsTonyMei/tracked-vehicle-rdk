@@ -2,6 +2,7 @@
 """本地屏显 — 零拷贝 NV12 直读 + 手势闪框 + 多尺度距离 + 渲染线程分离"""
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from hbm_img_msgs.msg import HbmMsg1080P
 from ai_msgs.msg import PerceptionTargets
 import cv2
@@ -28,7 +29,8 @@ class DisplayNode(Node):
         self._running = True
 
         # Subscriptions
-        self.sub_nv12 = self.create_subscription(HbmMsg1080P, '/hbmem_img', self.nv12_cb, 10)
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        self.sub_nv12 = self.create_subscription(HbmMsg1080P, '/hbmem_img', self.nv12_cb, qos)
         self.sub_det = self.create_subscription(PerceptionTargets, '/hobot_mono2d_body_detection', self.det_cb, 10)
         self.sub_ges = self.create_subscription(PerceptionTargets, '/hobot_hand_gesture_detection', self.gesture_cb, 10)
 
