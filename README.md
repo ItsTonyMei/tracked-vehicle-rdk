@@ -144,6 +144,7 @@ tracked-vehicle-rdk/
 │   ├── hardware-setup.md             #    ✅ 硬件连线与接口对表
 │   ├── protocol-spec.md              #    ✅ MotorCmd / SBUS / VIS 协议定义
 │   ├── stereo-vision-verification.md #    ✅ 双目视觉验证报告
+│   ├── lessons-learned.md            #    ✅ 踩坑经验记录 (13条)
 │   ├── ROS-ExpansionboardV3.0-en-new-20250509.pdf    #    ✅ STM32 扩展板手册
 │   ├── reference/                    #    📦 调试参考存档
 │   │   ├── gs130w_bpu_display_ref.py #       双目 BPU 渲染调试
@@ -174,7 +175,8 @@ tracked-vehicle-rdk/
 │   ├── tracked_vehicle/              #    核心 Python 模块
 │   │   ├── __init__.py               #    ✅ 包初始化
 │   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接
-│   │   ├── follow_logic.py           #    ⬜ distScore 跟随算法 (移植ESP32)
+│   │   ├── display_node.py           #    ✅ HDMI 屏显 + 手势锁定
+│   │   ├── follow_logic.py           #    ⬜ distScore 跟随算法 (待移植)
 │   │   ├── person_tracker.py         #    ✅ (已集成到 body_tracking, 文件已移除)
 │   │   └── ...                       #    ⬜ 更多感知与控制模块
 │   └── scripts/                      # 🔧 工具脚本
@@ -241,7 +243,7 @@ tracked-vehicle-rdk/
 | L3 | **X5 安全看门狗** | ROS2 节点心跳监控，异常时主动发停止指令 |
 | L4 | **电调物理保护** | ZTW Seal G2 内置过流/过热/堵转保护 |
 | L5 | **视觉丢帧暂留** | 人体检测丢失 ≤5 帧维持上一指令，避免急刹 |
-| L6 | **激光雷达紧急制动** | 检测到障碍物 < 安全距离 → 强制减速/停止 |
+| L6 | **激光雷达紧急制动** ⬜ | 检测到障碍物 < 安全距离 → 强制减速/停止 (待M6接入) |
 
 ---
 
@@ -348,7 +350,7 @@ ros2 launch tracked_vehicle motor_bridge.launch.py
   - [x] 人体检测+手势 (Body+Hand @ 60 FPS)
   - [x] cmd_vel → MotorCmd 串口桥接
 - [x] M5：跟随系统 ✅
-  - [x] distScore 跟随算法
+  - [x] 人体跟随 (基于 TROS body_tracking 策略)
   - [x] 手势唤醒 (OK=锁定, Palm=解除)
   - [x] HDMI 本地屏显 (1024×600 全屏)
   - [x] systemd 开机自启

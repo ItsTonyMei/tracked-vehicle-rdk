@@ -157,7 +157,7 @@ class DisplayNode(Node):
         frame = cv2.resize(frame, (nw, nh))
         sx, sy = (nw - scr_w)//2, (nh - scr_h)//2
         frame = frame[sy:sy+scr_h, sx:sx+scr_w]
-        h, w = frame.shape[:2]
+        h = frame.shape[0]
 
         # 状态条
         if self._locked_id:

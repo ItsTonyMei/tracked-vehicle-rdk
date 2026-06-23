@@ -4,7 +4,7 @@
 
 **MCU**: STM32F103RCT6 (Cortex-M3, 72MHz, 256KB Flash, 48KB SRAM, LQFP64)
 **USB-UART**: CH340N (Micro USB)
-**IMU**: MPU9250 (SPI1)
+**IMU**: MPU9250 (SPI2, PB12-PB15)
 
 ### 引脚功能表
 
@@ -49,7 +49,7 @@ SBUS 信号本身是反相 UART (idle low)，经板载 NPN 三极管反相后变
 | 参数 | 值 |
 |------|-----|
 | 工具 | PlatformIO + stm32flash |
-| 端口 | COM6 (CH340N) |
+| 端口 | COM5 (CH340N) |
 | 波特率 | 115200 |
 | 流程 | 手动 BOOT0 → RESET → 松 BOOT0 → `pio run -t upload` |
 

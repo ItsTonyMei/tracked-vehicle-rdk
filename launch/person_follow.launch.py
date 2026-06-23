@@ -28,8 +28,6 @@ from ament_index_python import get_package_share_directory
 
 
 def generate_launch_description():
-    target_dist = LaunchConfiguration('target_dist', default='2.0')
-
     # ── 1. 共享内存 ───────────────────────────────────
     shm = IncludeLaunchDescription(PythonLaunchDescriptionSource([
         get_package_share_directory('hobot_shm'), '/launch/hobot_shm.launch.py']))
