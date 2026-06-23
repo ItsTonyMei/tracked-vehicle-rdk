@@ -71,7 +71,7 @@ constexpr uint8_t  SBUS_CH_MODE        = 5;     // CH6 (LOW=手控RC, HIGH=自�
 constexpr uint16_t SBUS_ARM_THRESHOLD  = 1024;  // CH5 > this = ARMED
 constexpr uint16_t SBUS_MODE_THRESHOLD = 1024;  // CH6 > this = 自动模式
 
-// ─── MPU9250 IMU (SPI1) ───
+// ─── MPU9250 IMU (SPI2, PB12-PB15) ───
 constexpr uint8_t  PIN_IMU_NSS         = PB12;
 constexpr uint8_t  PIN_IMU_SCLK        = PB13;
 constexpr uint8_t  PIN_IMU_MISO        = PB14;

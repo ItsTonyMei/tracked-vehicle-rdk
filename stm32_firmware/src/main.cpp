@@ -10,7 +10,7 @@
  *   6. CH6 手控/自动模式切换 (LOW=手控, HIGH=自动) + 非阻塞蜂鸣提示
  *   7. SBUS 信号防抖: 5帧确认有效, 2次连续超时判丢失
  *   8. 蜂鸣器(PC5) + LED(PC13, active-LOW) 快/中/慢三速闪烁
- *   9. MPU9250 IMU SPI1 (PB12-15) 姿态读取
+ *   9. MPU9250 IMU SPI2 (PB12-15) 姿态读取
  *
  * 踩坑记录:
  *   - genericSTM32F103RC Serial 默认不映射 USART1, 需显式 setRx/setTx
@@ -27,6 +27,9 @@
 #include <Servo.h>
 #include <SPI.h>
 #include "config.h"
+
+// SPI2 for IMU (PB12-PB15 on STM32F103RCT6)
+static SPIClass SPI_IMU(PB15, PB14, PB13, PB12);  // MOSI,MISO,SCK,NSS
 
 // ═══════════════════════════════════════════════════════════════
 // 全局状态
@@ -271,7 +274,7 @@ static void x5ParseMotorCmd() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MPU9250 IMU (SPI1)
+// MPU9250 IMU (SPI2, PB12-PB15)
 // ═══════════════════════════════════════════════════════════════
 
 constexpr uint8_t MPU9250_WHO_AM_I   = 0x75;
@@ -281,24 +284,24 @@ constexpr uint8_t MPU9250_GYRO_XOUT  = 0x43;
 
 static uint8_t mpu9250ReadReg(uint8_t reg) {
     digitalWrite(PIN_IMU_NSS, LOW);
-    SPI.transfer(reg | 0x80);
-    uint8_t val = SPI.transfer(0x00);
+    SPI_IMU.transfer(reg | 0x80);
+    uint8_t val = SPI_IMU.transfer(0x00);
     digitalWrite(PIN_IMU_NSS, HIGH);
     return val;
 }
 
 static void mpu9250WriteReg(uint8_t reg, uint8_t val) {
     digitalWrite(PIN_IMU_NSS, LOW);
-    SPI.transfer(reg & 0x7F);
-    SPI.transfer(val);
+    SPI_IMU.transfer(reg & 0x7F);
+    SPI_IMU.transfer(val);
     digitalWrite(PIN_IMU_NSS, HIGH);
 }
 
 static void mpu9250ReadBurst(uint8_t reg, uint8_t *buf, uint8_t len) {
     digitalWrite(PIN_IMU_NSS, LOW);
-    SPI.transfer(reg | 0x80);
+    SPI_IMU.transfer(reg | 0x80);
     for (uint8_t i = 0; i < len; i++)
-        buf[i] = SPI.transfer(0x00);
+        buf[i] = SPI_IMU.transfer(0x00);
     digitalWrite(PIN_IMU_NSS, HIGH);
 }
 
@@ -306,10 +309,10 @@ static bool mpu9250Init() {
     pinMode(PIN_IMU_NSS, OUTPUT);
     digitalWrite(PIN_IMU_NSS, HIGH);
 
-    SPI.begin();
-    SPI.setBitOrder(MSBFIRST);
-    SPI.setDataMode(SPI_MODE0);
-    SPI.setClockDivider(SPI_CLOCK_DIV16);
+    SPI_IMU.begin();
+    SPI_IMU.setBitOrder(MSBFIRST);
+    SPI_IMU.setDataMode(SPI_MODE0);
+    SPI_IMU.setClockDivider(SPI_CLOCK_DIV16);
 
     delay(10);
     uint8_t whoami = mpu9250ReadReg(MPU9250_WHO_AM_I);
@@ -322,7 +325,7 @@ static bool mpu9250Init() {
 
     mpu9250WriteReg(MPU9250_PWR_MGMT_1, 0x00);
     delay(100);
-    Serial.println("[IMU] MPU9250 SPI1 OK");
+    Serial.println("[IMU] MPU9250 SPI2 OK");
     return true;
 }
 
