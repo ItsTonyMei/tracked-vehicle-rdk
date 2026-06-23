@@ -14,7 +14,6 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist
 import serial
 import struct
-import os
 
 
 def crc8(data: bytes) -> int:

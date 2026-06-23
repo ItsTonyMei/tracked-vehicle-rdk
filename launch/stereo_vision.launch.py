@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 双目视觉 launch 文件：GS130W 采集 + StereoNet 深度輐计 + Web 可视化
-"逻用:ros2 launch tracked_vehicle stereo_vision.launch.py
+用法:ros2 launch tracked_vehicle stereo_vision.launch.py
 """
 
 import os

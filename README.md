@@ -144,7 +144,7 @@ tracked-vehicle-rdk/
 │   ├── hardware-setup.md             #    ✅ 硬件连线与接口对表
 │   ├── protocol-spec.md              #    ✅ MotorCmd / SBUS / VIS 协议定义
 │   ├── stereo-vision-verification.md #    ✅ 双目视觉验证报告
-│   ├── ROS-ExpansionboardV3.0.pdf    #    ✅ STM32 扩展板手册
+│   ├── ROS-ExpansionboardV3.0-en-new-20250509.pdf    #    ✅ STM32 扩展板手册
 │   ├── reference/                    #    📦 调试参考存档
 │   │   ├── gs130w_bpu_display_ref.py #       双目 BPU 渲染调试
 │   │   └── gs130w_x11_display_ref.py #       双目 X11 渲染调试
@@ -163,7 +163,7 @@ tracked-vehicle-rdk/
 │   ├── stereo_vision.launch.py       #    ✅ 双目采集 + StereoNet 深度图
 │   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
 │   ├── full_system_tracking.launch.py#    ✅ 人体跟随 + 桥接一键启动
-│   ├── person_follow.launch.py       #    ⬜ 双目深度 + distScore 跟随
+│   ├── person_follow.launch.py       #    ✅ 手势唤醒人体跟随
 │   └── full_system.launch.py         #    ⬜ 全传感器一键全系统启动
 │
 ├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.3.0)
@@ -175,7 +175,7 @@ tracked-vehicle-rdk/
 │   │   ├── __init__.py               #    ✅ 包初始化
 │   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接
 │   │   ├── follow_logic.py           #    ⬜ distScore 跟随算法 (移植ESP32)
-│   │   ├── person_tracker.py         #    ⬜ YOLO 检测 + 双目深度采点
+│   │   ├── person_tracker.py         #    ✅ distScore 跟随 (已集成到 body_tracking)
 │   │   └── ...                       #    ⬜ 更多感知与控制模块
 │   └── scripts/                      # 🔧 工具脚本
 │       └── camera_info_repub.py      #    ✅ camera_info 尺寸缩放
@@ -337,12 +337,7 @@ ros2 launch tracked_vehicle motor_bridge.launch.py
 
 ## 🧪 测试
 
-```bash
-cd tests
-python3 -m pytest test_motor_protocol.py
-python3 -m pytest test_follow_logic.py
-python3 -m pytest test_vis_parser.py
-```
+> 测试用例尚未实现, 详见路线图 M7。
 
 ---
 

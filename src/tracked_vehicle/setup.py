@@ -11,7 +11,7 @@ config_files = glob(os.path.join(project_root, 'config', '*.yaml'))
 
 setup(
     name=package_name,
-    version='0.3.0',
+    version='0.5.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -29,7 +29,6 @@ setup(
     entry_points={
         'console_scripts': [
             'cmd_vel_bridge = tracked_vehicle.cmd_vel_bridge:main',
-            'person_tracker = tracked_vehicle.person_tracker:main',
             'display_node = tracked_vehicle.display_node:main',
         ],
     },

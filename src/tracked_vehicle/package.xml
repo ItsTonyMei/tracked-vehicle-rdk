@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>tracked_vehicle</name>
-  <version>0.3.0</version>
+  <version>0.5.0</version>
   <description>6WD heavy tracked vehicle — RDK X5 autonomous follower (ROS2 Humble + TROS)</description>
   <maintainer email="sunrise@rdkx5.local">sunrise</maintainer>
   <license>MIT</license>
@@ -11,9 +11,18 @@
 
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
-  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
   <depend>ai_msgs</depend>
   <depend>python3-serial</depend>
+
+  <exec_depend>hobot_shm</exec_depend>
+  <exec_depend>mipi_cam</exec_depend>
+  <exec_depend>hobot_codec</exec_depend>
+  <exec_depend>mono2d_body_detection</exec_depend>
+  <exec_depend>hand_lmk_detection</exec_depend>
+  <exec_depend>hand_gesture_detection</exec_depend>
+  <exec_depend>body_tracking</exec_depend>
+  <exec_depend>websocket</exec_depend>
 
   <test_depend>ament_flake8</test_depend>
 

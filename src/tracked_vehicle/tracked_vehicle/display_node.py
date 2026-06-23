@@ -19,7 +19,6 @@ class DisplayNode(Node):
         self._frame = None
         self._targets = None
         self._locked_id = None    # 手势锁定的 track_id
-        self._gesture = ''         # 当前手势
         self._gesture_ts = 0.0     # 手势时间戳
         self._gesture_votes = {}   # 手势投票 {code: count}
         self._VOTE_THRESHOLD = 30  # 连续30帧相同手势才触发 (~0.5s)
@@ -41,7 +40,7 @@ class DisplayNode(Node):
         self._targets = msg
 
     def gesture_cb(self, msg: PerceptionTargets):
-        """手势回调: 投票防抖, OK(14)=锁定, Palm(5)=解除"""
+        """手势回调: 投票防抖, OK(11)=锁定, Palm(5)=解除"""
         now = self.get_clock().now().nanoseconds / 1e9
         for t in msg.targets:
             for attr in t.attributes:
@@ -84,7 +83,6 @@ class DisplayNode(Node):
                         best = t
         if best:
             self._locked_id = best.track_id
-            self._gesture = 'OK'
             self._gesture_ts = now
             self.get_logger().info(f'LOCKED track_id={best.track_id}')
 
@@ -92,7 +90,6 @@ class DisplayNode(Node):
         if self._locked_id is None:
             return  # 未锁定时忽略 Palm
         self._locked_id = None
-        self._gesture = 'PALM'
         self._gesture_ts = now
         self.get_logger().info('UNLOCKED')
 
