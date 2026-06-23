@@ -182,6 +182,6 @@ def main():
     node.sub_img = node.create_subscription(CompressedImage, '/image', node.img_cb, 10)
     node.sub_det = node.create_subscription(PerceptionTargets, '/hobot_mono2d_body_detection', node.det_cb, 10)
     node.sub_ges = node.create_subscription(PerceptionTargets, '/hobot_hand_gesture_detection', node.gesture_cb, 10)
-    node.timer = node.create_timer(0.05, node.render)
+    node.timer = node.create_timer(0.1, node.render)  # 10Hz, 平衡流畅度与CPU
     rclpy.spin(node)
     rclpy.shutdown()
