@@ -165,10 +165,9 @@ class DisplayNode(Node):
                 self._lost_since = 0.0
 
     def gesture_cb(self, msg: PerceptionTargets):
-        """手势回调: 投票防抖 + 手势-人体空间匹配."""
+        """手势回调: 投票防抖, OK(11)=锁定, Palm(5)=解除.
+        处理第一个非零手势后立即返回，避免后续 gesture=0 降级已积累的投票."""
         now = self.get_clock().now().nanoseconds / 1e9
-        triggered = None
-        triggered_msg = None
 
         for t in msg.targets:
             for attr in t.attributes:
@@ -185,20 +184,14 @@ class DisplayNode(Node):
                     if k != code:
                         self._gesture_votes[k] = 0
                 if self._gesture_votes.get(code, 0) >= self._VOTE_THRESHOLD:
-                    triggered = code
-                    triggered_msg = msg
-                    break
-            if triggered:
-                break
-
-        if triggered:
-            self._gesture_votes.clear()
-            if now - self._gesture_ts < self._ok_cooldown_s:
-                return
-            if triggered == 11:
-                self._on_ok(now, triggered_msg)
-            elif triggered == 5:
-                self._on_palm(now)
+                    self._gesture_votes.clear()
+                    if now - self._gesture_ts < self._ok_cooldown_s:
+                        return
+                    if code == 11:
+                        self._on_ok(now, msg)
+                    elif code == 5:
+                        self._on_palm(now)
+                return  # 只处理第一个有效手势，防止后续 gesture=0 清零投票
 
     # ═══════════════════════════════════════════════════════════════
     # 锁定状态机
