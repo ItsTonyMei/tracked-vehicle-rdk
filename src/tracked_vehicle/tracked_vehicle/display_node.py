@@ -150,6 +150,34 @@ class DisplayNode(Node):
                         return True
         return False
 
+    def _get_body_center(self, targets, track_id):
+        """获取指定 track_id 的 body ROI 中心点, 无则返回 None."""
+        if targets is None:
+            return None
+        for t in targets.targets:
+            if t.track_id == track_id:
+                for roi in t.rois:
+                    if roi.type == 'body':
+                        return (roi.rect.x_offset + roi.rect.width / 2.0,
+                                roi.rect.y_offset + roi.rect.height / 2.0)
+        return None
+
+    def _find_nearest_body(self, targets, cx, cy, max_dist):
+        """在 targets 中找距离 (cx,cy) 最近的 body, 返回 (track_id, dist) 或 (None, inf)."""
+        best_id, best_dist = None, float('inf')
+        if targets is None:
+            return None, best_dist
+        for t in targets.targets:
+            for roi in t.rois:
+                if roi.type == 'body':
+                    bx = roi.rect.x_offset + roi.rect.width / 2.0
+                    by = roi.rect.y_offset + roi.rect.height / 2.0
+                    d = ((bx - cx) ** 2 + (by - cy) ** 2) ** 0.5
+                    if d < best_dist:
+                        best_dist = d
+                        best_id = t.track_id
+        return (best_id, best_dist) if best_dist < max_dist else (None, best_dist)
+
     def det_cb(self, msg: PerceptionTargets):
         now = self.get_clock().now().nanoseconds / 1e9
         self._targets = msg
@@ -171,16 +199,32 @@ class DisplayNode(Node):
 
         # ── 追踪被锁者存在性 (检查 body ROI) ──
         if self._locked_id is not None:
-            if not self._target_visible(msg, self._locked_id):
+            if self._target_visible(msg, self._locked_id):
+                self._lost_since = 0.0
+                # 更新最后已知位置
+                c = self._get_body_center(msg, self._locked_id)
+                if c:
+                    self._last_known_cx, self._last_known_cy = c
+            else:
                 if self._lost_since == 0.0:
-                    self._lost_since = now
-                elif now - self._lost_since > self._lost_hold_s:
+                    self._lost_since = now  # 开始 HOLDING
+
+                # ── 空间重识别: 检查是否有新 body 出现在最后已知位置附近 ──
+                if hasattr(self, '_last_known_cx'):
+                    matched_id, dist = self._find_nearest_body(
+                        msg, self._last_known_cx, self._last_known_cy, 150.0)
+                    if matched_id is not None:
+                        self.get_logger().info(
+                            f'RE-ID #{self._locked_id} -> #{matched_id} (dist={dist:.0f}px)')
+                        self._locked_id = matched_id
+                        self._lost_since = 0.0
+
+                # 仍未找到 → 检查超时
+                if self._lost_since > 0.0 and now - self._lost_since > self._lost_hold_s:
                     self.get_logger().info(
                         f'#{self._locked_id} 消失 >{self._lost_hold_s:.0f}s, 解除锁定')
                     self._locked_id = None
                     self._lost_since = 0.0
-            else:
-                self._lost_since = 0.0
 
     def gesture_cb(self, msg: PerceptionTargets):
         """手势回调: 投票防抖, OK(11)=锁定, Palm(5)=解除.

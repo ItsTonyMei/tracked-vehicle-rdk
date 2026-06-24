@@ -82,7 +82,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{'activate_wakeup_gesture': 1,
                      'img_width': 960, 'img_height': 544,
-                     'track_serial_lost_num_thr': 30,
+                     'track_serial_lost_num_thr': 300,
                      'linear_velocity': 0.2, 'angular_velocity': 0.4,
                      'activate_robot_move_thr': 5}],
         arguments=['--ros-args', '--log-level', log_level])
