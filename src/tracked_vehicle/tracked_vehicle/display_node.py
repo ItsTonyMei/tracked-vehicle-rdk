@@ -96,7 +96,7 @@ class DisplayNode(Node):
         if self._targets is None or gesture_msg is None:
             return None
 
-        # 收集所有 body ROI
+        # 收集 body detection 中的 body ROI
         body_map = {}  # track_id → rect
         for bt in self._targets.targets:
             if bt.type != 'person':
@@ -104,13 +104,14 @@ class DisplayNode(Node):
             r = self._find_body_roi(bt)
             if r is not None:
                 body_map[bt.track_id] = r
-
         if not body_map:
             return None
 
-        # 对手势消息中每个 target，取其第一个 ROI 中心点进行匹配
+        # 对手势消息中每个 target, 只取 hand 类型 ROI 的中心点进行匹配
         for gt in gesture_msg.targets:
             for groi in gt.rois:
+                if groi.type != 'hand':
+                    continue  # 跳过 body/head/face, 只匹配手部 ROI
                 gx = groi.rect.x_offset + groi.rect.width / 2.0
                 gy = groi.rect.y_offset + groi.rect.height / 2.0
                 for tid, brect in body_map.items():
