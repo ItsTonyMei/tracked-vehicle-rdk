@@ -244,35 +244,75 @@ class DisplayNode(Node):
     _FONT_SCALE = 0.7
     _FONT_THICK = 2
     _LABEL_H = 32
+    _DOT_R = 7  # 状态指示灯半径
+
+    # CPU 使用率需要两次采样——缓存上一次的 jiffies
+    _prev_cpu_jiffies = None
+    _prev_cpu_ts = 0.0
 
     @staticmethod
     def _read_sys_info():
-        """读取 X5 系统状态: CPU温度/占用, 内存."""
+        """读取 X5 系统状态: CPU%/BPU%/MEM%/温度. 每 1s 刷新一次."""
         info = {}
+
+        # ── 温度 ──
         try:
             with open('/sys/class/thermal/thermal_zone0/temp') as f:
                 info['temp'] = float(f.read().strip()) / 1000.0
         except Exception:
             info['temp'] = 0.0
+
+        # ── 内存 % ──
         try:
+            total = available = 0
             with open('/proc/meminfo') as f:
                 for line in f:
-                    if 'MemAvailable' in line:
-                        parts = line.split()
-                        info['mem_avail_mb'] = int(parts[1]) // 1024
+                    if 'MemTotal' in line:
+                        total = int(line.split()[1])
+                    elif 'MemAvailable' in line:
+                        available = int(line.split()[1])
+                    if total and available:
                         break
+            info['mem_pct'] = (total - available) / total * 100.0 if total else 0.0
         except Exception:
-            info['mem_avail_mb'] = 0
+            info['mem_pct'] = 0.0
+
+        # ── BPU % ──
+        try:
+            with open('/sys/devices/system/bpu/ratio') as f:
+                info['bpu_pct'] = float(f.read().strip())
+        except Exception:
+            info['bpu_pct'] = 0.0
+
         return info
 
     _sys_info = {}
     _sys_info_ts = 0.0
+    _cpu_pct = 0.0
 
     def _get_sys_info(self):
+        """读取系统状态 (1Hz 缓存) + 计算 CPU 占用率."""
         now = self.get_clock().now().nanoseconds / 1e9
         if now - self._sys_info_ts > 1.0:
             self._sys_info = self._read_sys_info()
             self._sys_info_ts = now
+
+            # CPU 占用率: 两次 /proc/stat 采样的差值
+            try:
+                with open('/proc/stat') as f:
+                    fields = f.readline().split()[1:]  # skip "cpu"
+                jiffies = [int(x) for x in fields]
+                total = sum(jiffies)
+                idle = jiffies[3] + (jiffies[4] if len(jiffies) > 4 else 0)  # idle + iowait
+                if self._prev_cpu_jiffies is not None:
+                    d_total = total - self._prev_total
+                    d_idle = idle - self._prev_idle
+                    self._cpu_pct = (d_total - d_idle) / d_total * 100.0 if d_total > 0 else 0.0
+                self._prev_total = total
+                self._prev_idle = idle
+            except Exception:
+                self._cpu_pct = 0.0
+
         return self._sys_info
 
     # ═══════════════════════════════════════════════════════════════
@@ -358,12 +398,55 @@ class DisplayNode(Node):
 
         # ── X5 系统状态栏 (左上角) ──
         si = self._get_sys_info()
-        sys_text = "X5  CPU:{:.0f}C  MEM:{}M".format(
-            si.get("temp", 0), si.get("mem_avail_mb", 0))
-        if targets is not None:
-            sys_text += f'  FPS:{targets.fps:.0f}'
-        cv2.putText(frame, sys_text, (10, 28),
-                    self._FONT, self._FONT_SCALE, (200, 200, 200), self._FONT_THICK)
+        cpu_pct = self._cpu_pct
+        bpu_pct = si.get('bpu_pct', 0)
+        mem_pct = si.get('mem_pct', 0)
+        temp = si.get('temp', 0)
+
+        def _draw_dot(x, y, pct, warn_th=80, crit_th=95):
+            """根据百分比画状态指示灯: 绿(<warn) / 黄(<crit) / 红(>=crit)"""
+            if pct >= crit_th:
+                c = (0, 0, 255)
+            elif pct >= warn_th:
+                c = (0, 255, 255)
+            else:
+                c = (0, 255, 0)
+            cv2.circle(frame, (x, y), self._DOT_R, c, -1)
+
+        # 第一行: 指示灯 + CPU/BPU/MEM/TEMP
+        row1_y = 22
+        x = 10
+        for label, pct in [('CPU', cpu_pct), ('BPU', bpu_pct), ('MEM', mem_pct)]:
+            _draw_dot(x + self._DOT_R, row1_y, pct)
+            cv2.putText(frame, f'{label}:{pct:.0f}%', (x + 20, row1_y + 8),
+                        self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
+            x += 160
+
+        # 温度 (特殊: >80=黄, >90=红)
+        if temp >= 90:
+            tc = (0, 0, 255)
+        elif temp >= 80:
+            tc = (0, 255, 255)
+        else:
+            tc = (0, 255, 0)
+        cv2.circle(frame, (x + self._DOT_R, row1_y), self._DOT_R, tc, -1)
+        cv2.putText(frame, f'TEMP:{temp:.0f}C', (x + 20, row1_y + 8),
+                    self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
+
+        # 第二行: FPS + 跟踪状态
+        row2_y = 52
+        fps_str = f'FPS:{targets.fps:.0f}' if targets is not None else 'FPS:--'
+        cv2.putText(frame, fps_str, (10, row2_y),
+                    self._FONT, self._FONT_SCALE, (180, 180, 180), self._FONT_THICK)
+
+        # 人体检测状态指示灯
+        has_people_now = targets is not None and any(
+            t.type == 'person' for t in targets.targets)
+        status_dot_color = (0, 255, 0) if has_people_now else (100, 100, 100)
+        cv2.circle(frame, (130, row2_y - 9), self._DOT_R, status_dot_color, -1)
+        people_text = 'DET' if has_people_now else '---'
+        cv2.putText(frame, people_text, (148, row2_y),
+                    self._FONT, self._FONT_SCALE, (180, 180, 180), self._FONT_THICK)
 
         # ── 状态条 (底部) ──
         bar_y = h - 16
@@ -372,17 +455,22 @@ class DisplayNode(Node):
                 self.get_clock().now().nanoseconds / 1e9 - self._lost_since))
             status = f'HOLDING #{self._locked_id} {remaining:.1f}s | Palm to release'
             color = (0, 165, 255)
+            dot_c = (0, 165, 255)
         elif self._locked_id:
             status = f'LOCKED #{self._locked_id} | OK to switch, Palm to release'
             color = (0, 0, 255)
-        elif targets and any(t.type == 'person' for t in targets.targets):
+            dot_c = (0, 0, 255)
+        elif has_people_now:
             pids = [str(t.track_id) for t in targets.targets if t.type == 'person']
             status = f'DETECT [{",".join(pids)}] | OK=lock Palm=unlock'
             color = (0, 255, 255)
+            dot_c = (0, 255, 255)
         else:
             status = 'WAITING | OK gesture to lock'
             color = (0, 0, 255)
-        cv2.putText(frame, status, (10, bar_y),
+            dot_c = (100, 100, 100)
+        cv2.circle(frame, (self._DOT_R + 10, bar_y - 9), self._DOT_R, dot_c, -1)
+        cv2.putText(frame, status, (30, bar_y),
                     self._FONT, self._FONT_SCALE, color, self._FONT_THICK)
 
         cv2.imshow(self._window, frame)
