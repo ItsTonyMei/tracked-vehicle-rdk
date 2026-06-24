@@ -369,13 +369,13 @@ class DisplayNode(Node):
                             self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
                 bx = x1 + int(r.width) // 2
                 by = y1 + int(r.height) // 2
-                cv2.line(frame, (bx, by), (orig_w // 2, orig_h // 2), (255, 0, 255), 1)
+                cv2.line(frame, (bx, by), (orig_w // 2, orig_h // 2), box_color, 2)
 
-        # 中心十字
+        # 中心十字 (黑色加粗)
         cx0, cy0 = orig_w // 2, orig_h // 2
-        cv2.line(frame, (cx0 - 20, cy0), (cx0 + 20, cy0), (128, 128, 128), 1)
-        cv2.line(frame, (cx0, cy0 - 20), (cx0, cy0 + 20), (128, 128, 128), 1)
-        cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (100, 100, 100), 1)
+        cv2.line(frame, (cx0 - 25, cy0), (cx0 + 25, cy0), (0, 0, 0), 2)
+        cv2.line(frame, (cx0, cy0 - 25), (cx0, cy0 + 25), (0, 0, 0), 2)
+        cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (0, 0, 0), 2)
 
         if self.rotate_deg:
             frame = self._rotate(frame, self.rotate_deg)
