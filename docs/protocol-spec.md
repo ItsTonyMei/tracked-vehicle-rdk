@@ -14,7 +14,7 @@
 | 5 | `CRC8` | 1-4 字节的 CRC-8-MAXIM |
 
 - **CRC8**: poly=0x07, init=0x00, 与 ESP32/ESP8266/原项目一致
-- **发送间隔**: 50ms
+- **发送间隔**: 跟随 /cmd_vel topic 发布频率（body_tracking 约 30Hz）
 - **范围**: throttle/steering 均为 1000-2000μs (uint16)
 - **停止值**: throttle=1500, steering=1500
 - **超时**: 60s 无有效帧 → STM32 自动切中位 + 蜂鸣锁定

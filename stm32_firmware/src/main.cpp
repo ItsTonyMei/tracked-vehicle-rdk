@@ -41,6 +41,7 @@ static uint16_t  g_steering   = PWM_NEUTRAL;
 static uint32_t  g_lastCmdMs  = 0;
 static bool      g_escReady   = false;
 static bool      g_motorArmed = false;
+static bool      g_ch5Armed   = false;  // CH5 边沿检测状态 (防抖通过后置位)
 
 static uint16_t  g_x5Throttle = PWM_NEUTRAL;
 static uint16_t  g_x5Steering = PWM_NEUTRAL;
@@ -53,8 +54,7 @@ static struct {
     bool     failsafe;
     bool     lostFrame;
     uint32_t lastFrameMs;
-    bool     armedPrev;
-    int      goodFrames;     // 连续好帧计数器 (防抖: 需≥3 帧才判定有效)
+    int      goodFrames;     // 连续好帧计数器 (防抖: 需≥5 帧才判定有效)
 } g_sbus;
 
 static struct {
@@ -91,14 +91,19 @@ static void escInit() {
     Serial.println("us");
 }
 
-static void escSet(uint16_t throttle, uint16_t steering) {
+static void computeMix(uint16_t throttle, uint16_t steering, int &left, int &right) {
     int sOff = (int)steering - (int)PWM_NEUTRAL;
-    int left  = (int)throttle + sOff;
-    int right = (int)throttle - sOff;
+    left  = (int)throttle + sOff;
+    right = (int)throttle - sOff;
     if (left  < PWM_MIN) left  = PWM_MIN;
     if (left  > PWM_MAX) left  = PWM_MAX;
     if (right < PWM_MIN) right = PWM_MIN;
     if (right > PWM_MAX) right = PWM_MAX;
+}
+
+static void escSet(uint16_t throttle, uint16_t steering) {
+    int left, right;
+    computeMix(throttle, steering, left, right);
     servoLeft.writeMicroseconds((uint16_t)left);
     servoRight.writeMicroseconds((uint16_t)right);
 }
@@ -334,7 +339,7 @@ static bool mpu9250Init() {
         return false;
     }
 
-    mpu9250WriteReg(MPU9250_PWR_MGMT_1, 0x00);
+    mpu9250WriteReg(MPU9250_PWR_MGMT_1, 0x01);  // PLL with X-axis gyro reference
     delay(100);
     Serial.println("[IMU] MPU9250 SPI2 OK");
     return true;
@@ -451,18 +456,17 @@ void loop() {
         }
         lastCh5High = ch5High;
 
-        // 只在防抖通过后触发边沿
+        // 只在防抖通过后触发边沿 (ch5Armed 为文件级全局, 持久化边沿状态)
         if (ch5StableCnt == 3) {
-            static bool ch5Armed = false;
-            if (ch5High && !ch5Armed) {
-                ch5Armed = true;
+            if (ch5High && !g_ch5Armed) {
+                g_ch5Armed = true;
                 if (!g_motorArmed) {
                     g_motorArmed = true;
                     beepNonBlocking(2);  // double beep: arm
                     Serial.println("[SBUS] ARMED (CH5 HIGH)");
                 }
-            } else if (!ch5High && ch5Armed) {
-                ch5Armed = false;
+            } else if (!ch5High && g_ch5Armed) {
+                g_ch5Armed = false;
                 if (g_motorArmed) {
                     g_motorArmed = false;
                     escSet(PWM_NEUTRAL, PWM_NEUTRAL);
@@ -538,9 +542,8 @@ void loop() {
         else if (s < lo) dir = "L";
         else              dir = "STOP";
 
-        int sOff = s - (int)PWM_NEUTRAL;
-        int left  = t + sOff; if (left  < PWM_MIN) left = PWM_MIN; if (left > PWM_MAX) left = PWM_MAX;
-        int right = t - sOff; if (right < PWM_MIN) right = PWM_MIN; if (right > PWM_MAX) right = PWM_MAX;
+        int left, right;
+        computeMix(g_throttle, g_steering, left, right);
 
         bool sbusOk   = g_sbus.valid && !g_sbus.failsafe;
         bool x5Ok     = g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS);

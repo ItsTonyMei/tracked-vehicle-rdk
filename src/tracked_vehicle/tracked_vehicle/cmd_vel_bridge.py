@@ -37,6 +37,7 @@ class CmdVelBridge(Node):
         # 速度 → PWM 映射参数
         self.linear_gain = self.declare_parameter('linear_gain', 500.0).value
         self.angular_gain = self.declare_parameter('angular_gain', 300.0).value
+        self.steering_invert = self.declare_parameter('steering_invert', True).value
         self.pwm_center = 1500
         self.pwm_min = 1000
         self.pwm_max = 2000
@@ -70,8 +71,8 @@ class CmdVelBridge(Node):
         self.last_cmd_time = self.get_clock().now()
 
         throttle = self.pwm_center + int(msg.linear.x * self.linear_gain)
-        # 符号取反: angular.z>0 (ROS左转) → steering<1500 → sOff<0 → 左电机慢右电机快 → 左转
-        steering = self.pwm_center - int(msg.angular.z * self.angular_gain)
+        sign = -1 if self.steering_invert else 1
+        steering = self.pwm_center + sign * int(msg.angular.z * self.angular_gain)
 
         throttle = max(self.pwm_min, min(self.pwm_max, throttle))
         steering = max(self.pwm_min, min(self.pwm_max, steering))

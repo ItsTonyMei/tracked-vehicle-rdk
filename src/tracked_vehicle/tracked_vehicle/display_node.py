@@ -57,8 +57,10 @@ class DisplayNode(Node):
         self._last_det_ts = self.get_clock().now().nanoseconds / 1e9
 
     def gesture_cb(self, msg: PerceptionTargets):
-        """手势回调: 投票防抖, OK(11)=锁定, Palm(5)=解除"""
+        """手势回调: 投票防抖, OK(11)=锁定, Palm(5)=解除. 遍历所有目标累积投票."""
         now = self.get_clock().now().nanoseconds / 1e9
+        triggered = None
+
         for t in msg.targets:
             for attr in t.attributes:
                 try:
@@ -66,25 +68,27 @@ class DisplayNode(Node):
                 except (ValueError, TypeError):
                     continue
                 if code == 0:
-                    # 无手势时降级投票计数, 避免瞬间手势误触发
                     for k in list(self._gesture_votes.keys()):
                         self._gesture_votes[k] = max(0, self._gesture_votes[k] - 2)
                     continue
                 self._gesture_votes[code] = self._gesture_votes.get(code, 0) + 1
-                # 重置其他手势计数
                 for k in list(self._gesture_votes.keys()):
                     if k != code:
                         self._gesture_votes[k] = 0
-                # 达到阈值触发
                 if self._gesture_votes.get(code, 0) >= self._VOTE_THRESHOLD:
-                    self._gesture_votes.clear()
-                    if now - self._gesture_ts < 3.0:  # 3s 冷却
-                        return
-                    if code == 11:  # OK
-                        self._on_ok(now)
-                    elif code == 5:  # Palm
-                        self._on_palm(now)
-                return  # 只处理第一个有效手势
+                    triggered = code
+                    break
+            if triggered:
+                break
+
+        if triggered:
+            self._gesture_votes.clear()
+            if now - self._gesture_ts < 3.0:
+                return
+            if triggered == 11:
+                self._on_ok(now)
+            elif triggered == 5:
+                self._on_palm(now)
 
     def _on_ok(self, now):
         """锁定画面中面积最大的人"""
@@ -107,7 +111,8 @@ class DisplayNode(Node):
         if best:
             self._locked_id = best.track_id
             self._gesture_ts = now
-            self._flash = 15; self._flash_color = (0, 255, 0)
+            self._flash = 15
+            self._flash_color = (0, 255, 0)
             self.get_logger().info(f'LOCKED track_id={best.track_id}')
 
     def _on_palm(self, now):
@@ -115,7 +120,8 @@ class DisplayNode(Node):
             return  # 未锁定时忽略 Palm
         self._locked_id = None
         self._gesture_ts = now
-        self._flash = 15; self._flash_color = (0, 0, 255)
+        self._flash = 15
+        self._flash_color = (0, 0, 255)
         self.get_logger().info('UNLOCKED')
 
     def _rotate(self, img):
