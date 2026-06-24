@@ -127,14 +127,36 @@ class DisplayNode(Node):
         raw = np.frombuffer(msg.data, dtype=np.uint8)
         self._frame = cv2.imdecode(raw, cv2.IMREAD_COLOR)
 
+    @staticmethod
+    def _has_body(targets):
+        """检查 targets 中是否存在 body ROI（而非仅 head/face/hand）"""
+        if targets is None:
+            return False
+        for t in targets.targets:
+            for roi in t.rois:
+                if roi.type == 'body':
+                    return True
+        return False
+
+    @staticmethod
+    def _target_visible(targets, track_id):
+        """检查 track_id 对应的人是否有 body ROI 在画面中"""
+        if targets is None:
+            return False
+        for t in targets.targets:
+            if t.track_id == track_id:
+                for roi in t.rois:
+                    if roi.type == 'body':
+                        return True
+        return False
+
     def det_cb(self, msg: PerceptionTargets):
         now = self.get_clock().now().nanoseconds / 1e9
         self._targets = msg
         self._last_det_ts = now
 
-        # ── 画面无人检测 → 超时重置 ──
-        has_people = any(t.type == 'person' for t in msg.targets)
-        if not has_people:
+        # ── 画面无人检测 → 超时重置 (检查 body ROI 而非 person type) ──
+        if not self._has_body(msg):
             if self._empty_since == 0.0:
                 self._empty_since = now
             elif now - self._empty_since > self._empty_reset_s:
@@ -147,13 +169,9 @@ class DisplayNode(Node):
         else:
             self._empty_since = 0.0
 
-        # ── 追踪被锁者存在性 ──
+        # ── 追踪被锁者存在性 (检查 body ROI) ──
         if self._locked_id is not None:
-            still_visible = any(
-                t.track_id == self._locked_id and t.type == 'person'
-                for t in msg.targets
-            )
-            if not still_visible:
+            if not self._target_visible(msg, self._locked_id):
                 if self._lost_since == 0.0:
                     self._lost_since = now
                 elif now - self._lost_since > self._lost_hold_s:
@@ -439,12 +457,11 @@ class DisplayNode(Node):
         cv2.putText(frame, fps_str, (10, row2_y),
                     self._FONT, self._FONT_SCALE, (180, 180, 180), self._FONT_THICK)
 
-        # 人体检测状态指示灯
-        has_people_now = targets is not None and any(
-            t.type == 'person' for t in targets.targets)
-        status_dot_color = (0, 255, 0) if has_people_now else (100, 100, 100)
+        # 人体检测状态指示灯 (基于 body ROI 而非 person type)
+        has_body_now = self._has_body(targets)
+        status_dot_color = (0, 255, 0) if has_body_now else (100, 100, 100)
         cv2.circle(frame, (130, row2_y - 9), self._DOT_R, status_dot_color, -1)
-        people_text = 'DET' if has_people_now else '---'
+        people_text = 'DET' if has_body_now else '---'
         cv2.putText(frame, people_text, (148, row2_y),
                     self._FONT, self._FONT_SCALE, (180, 180, 180), self._FONT_THICK)
 
@@ -460,7 +477,7 @@ class DisplayNode(Node):
             status = f'LOCKED #{self._locked_id} | OK to switch, Palm to release'
             color = (0, 0, 255)
             dot_c = (0, 0, 255)
-        elif has_people_now:
+        elif has_body_now:
             pids = [str(t.track_id) for t in targets.targets if t.type == 'person']
             status = f'DETECT [{",".join(pids)}] | OK=lock Palm=unlock'
             color = (0, 255, 255)
