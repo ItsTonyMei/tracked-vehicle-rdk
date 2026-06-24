@@ -30,7 +30,7 @@ class DisplayNode(Node):
         # ── 可配置参数 ──
         self._VOTE_THRESHOLD = self.declare_parameter('gesture_vote_threshold', 30).value
         self._ok_cooldown_s = self.declare_parameter('ok_cooldown_s', 3.0).value
-        self._lost_hold_s = self.declare_parameter('lost_hold_s', 2.0).value
+        self._lost_hold_s = self.declare_parameter('lost_hold_s', 5.0).value
         self._empty_reset_s = self.declare_parameter('empty_reset_s', 10.0).value
         self._max_det_age_s = self.declare_parameter('max_det_age_s', 0.5).value
 
