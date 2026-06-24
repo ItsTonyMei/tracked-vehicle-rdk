@@ -371,11 +371,11 @@ class DisplayNode(Node):
                 by = y1 + int(r.height) // 2
                 cv2.line(frame, (bx, by), (orig_w // 2, orig_h // 2), box_color, 2)
 
-        # 中心十字 (黑色加粗)
+        # 中心十字 (白色加粗)
         cx0, cy0 = orig_w // 2, orig_h // 2
-        cv2.line(frame, (cx0 - 25, cy0), (cx0 + 25, cy0), (0, 0, 0), 2)
-        cv2.line(frame, (cx0, cy0 - 25), (cx0, cy0 + 25), (0, 0, 0), 2)
-        cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (0, 0, 0), 2)
+        cv2.line(frame, (cx0 - 25, cy0), (cx0 + 25, cy0), (255, 255, 255), 2)
+        cv2.line(frame, (cx0, cy0 - 25), (cx0, cy0 + 25), (255, 255, 255), 2)
+        cv2.ellipse(frame, (cx0, cy0), (40, 40), 0, 0, 360, (255, 255, 255), 2)
 
         if self.rotate_deg:
             frame = self._rotate(frame, self.rotate_deg)
