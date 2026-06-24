@@ -218,7 +218,7 @@ class DisplayNode(Node):
         self._gesture_ts = now
         self._lost_since = 0.0
         self._flash = 15
-        self._flash_color = (0, 255, 0)
+        self._flash_color = (0, 0, 255)  # 锁定=红色闪框
 
         if old_id is None:
             self.get_logger().info(f'LOCKED track_id={matched_id}')
@@ -234,7 +234,46 @@ class DisplayNode(Node):
         self._lost_since = 0.0
         self._gesture_ts = now
         self._flash = 15
-        self._flash_color = (0, 0, 255)
+        self._flash_color = (0, 255, 0)  # 解锁=绿色闪框
+
+    # ═══════════════════════════════════════════════════════════════
+    # 系统状态读取
+    # ═══════════════════════════════════════════════════════════════
+
+    _FONT = cv2.FONT_HERSHEY_SIMPLEX
+    _FONT_SCALE = 0.7
+    _FONT_THICK = 2
+    _LABEL_H = 32
+
+    @staticmethod
+    def _read_sys_info():
+        """读取 X5 系统状态: CPU温度/占用, 内存."""
+        info = {}
+        try:
+            with open('/sys/class/thermal/thermal_zone0/temp') as f:
+                info['temp'] = float(f.read().strip()) / 1000.0
+        except Exception:
+            info['temp'] = 0.0
+        try:
+            with open('/proc/meminfo') as f:
+                for line in f:
+                    if 'MemAvailable' in line:
+                        parts = line.split()
+                        info['mem_avail_mb'] = int(parts[1]) // 1024
+                        break
+        except Exception:
+            info['mem_avail_mb'] = 0
+        return info
+
+    _sys_info = {}
+    _sys_info_ts = 0.0
+
+    def _get_sys_info(self):
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now - self._sys_info_ts > 1.0:
+            self._sys_info = self._read_sys_info()
+            self._sys_info_ts = now
+        return self._sys_info
 
     # ═══════════════════════════════════════════════════════════════
     # 渲染
@@ -284,9 +323,10 @@ class DisplayNode(Node):
                 label = f'#{t.track_id} {dist:.1f}m'
                 if is_locked and holding:
                     label += ' ?'
-                cv2.rectangle(frame, (x1, y1 - 24), (x1 + 180, y1), box_color, -1)
-                cv2.putText(frame, label, (x1 + 4, y1 - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                lw = 200 if len(label) < 12 else 260
+                cv2.rectangle(frame, (x1, y1 - self._LABEL_H), (x1 + lw, y1), box_color, -1)
+                cv2.putText(frame, label, (x1 + 4, y1 - 8),
+                            self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
                 bx = x1 + int(r.width) // 2
                 by = y1 + int(r.height) // 2
                 cv2.line(frame, (bx, by), (orig_w // 2, orig_h // 2), (255, 0, 255), 1)
@@ -316,7 +356,17 @@ class DisplayNode(Node):
             cv2.rectangle(frame, (0, 0), (scr_w - 1, scr_h - 1), self._flash_color, t)
             self._flash -= 1
 
-        # 状态条
+        # ── X5 系统状态栏 (左上角) ──
+        si = self._get_sys_info()
+        sys_text = "X5  CPU:{:.0f}C  MEM:{}M".format(
+            si.get("temp", 0), si.get("mem_avail_mb", 0))
+        if targets is not None:
+            sys_text += f'  FPS:{targets.fps:.0f}'
+        cv2.putText(frame, sys_text, (10, 28),
+                    self._FONT, self._FONT_SCALE, (200, 200, 200), self._FONT_THICK)
+
+        # ── 状态条 (底部) ──
+        bar_y = h - 16
         if holding:
             remaining = max(0, self._lost_hold_s - (
                 self.get_clock().now().nanoseconds / 1e9 - self._lost_since))
@@ -327,13 +377,13 @@ class DisplayNode(Node):
             color = (0, 0, 255)
         elif targets and any(t.type == 'person' for t in targets.targets):
             pids = [str(t.track_id) for t in targets.targets if t.type == 'person']
-            status = f'DETECT [{",".join(pids)}] {targets.fps}FPS | OK=lock Palm=unlock'
+            status = f'DETECT [{",".join(pids)}] | OK=lock Palm=unlock'
             color = (0, 255, 255)
         else:
             status = 'WAITING | OK gesture to lock'
             color = (0, 0, 255)
-        cv2.putText(frame, status, (10, h - 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.putText(frame, status, (10, bar_y),
+                    self._FONT, self._FONT_SCALE, color, self._FONT_THICK)
 
         cv2.imshow(self._window, frame)
         cv2.waitKey(1)
