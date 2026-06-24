@@ -22,8 +22,8 @@ def crc8(data: bytes) -> int:
     for b in data:
         crc ^= b
         for _ in range(8):
-            crc = (crc << 1) ^ 0x07 if crc & 0x80 else crc << 1
-    return crc & 0xFF
+            crc = ((crc << 1) ^ 0x07 if crc & 0x80 else crc << 1) & 0xFF
+    return crc
 
 
 class CmdVelBridge(Node):
@@ -42,8 +42,10 @@ class CmdVelBridge(Node):
         self.pwm_max = 2000
 
         # 打开串口
+        self._ser_open = False
         try:
             self.ser = serial.Serial(port, baud, timeout=0.1)
+            self._ser_open = True
             self.get_logger().info(f'串口已打开: {port} @ {baud}')
         except serial.SerialException as e:
             self.get_logger().fatal(f'无法打开串口 {port}: {e}')
@@ -52,10 +54,17 @@ class CmdVelBridge(Node):
         # 订阅 /cmd_vel
         self.sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_cb, 10)
 
-        # 命令超时定时器 (60s 无新命令 → 发停止帧)
+        # 命令超时: 60s 无新命令 → 发停止帧, 每 5s 检查一次 (避免空转)
         self.timeout = self.declare_parameter('cmd_timeout_s', 60.0).value
         self.last_cmd_time = self.get_clock().now()
-        self.timer = self.create_timer(0.5, self.watchdog)
+        self.timer = self.create_timer(min(5.0, self.timeout / 10.0), self.watchdog)
+
+    def __del__(self):
+        if getattr(self, '_ser_open', False):
+            try:
+                self.ser.close()
+            except Exception:
+                pass
 
     def cmd_cb(self, msg: Twist):
         self.last_cmd_time = self.get_clock().now()
@@ -79,8 +88,23 @@ class CmdVelBridge(Node):
         frame = b'\xAA' + payload + bytes([crc8(payload)])
         try:
             self.ser.write(frame)
+        except serial.SerialException:
+            if self._try_reconnect():
+                try:
+                    self.ser.write(frame)
+                except serial.SerialException:
+                    pass
+
+    def _try_reconnect(self):
+        try:
+            if self.ser.is_open:
+                self.ser.close()
+            self.ser.open()
+            self.get_logger().info('串口已重新连接')
+            return True
         except serial.SerialException as e:
-            self.get_logger().error(f'串口写入失败: {e}')
+            self.get_logger().warn(f'串口重连失败: {e}')
+            return False
 
 
 def main():

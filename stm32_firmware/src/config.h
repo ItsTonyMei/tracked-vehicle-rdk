@@ -48,7 +48,7 @@ constexpr bool     LED_ACTIVE_LOW      = true;
 
 // ─── 安全时序 ───
 constexpr uint32_t ESC_INIT_DELAY_MS   = 3000;   // ESC 自检
-constexpr uint32_t CMD_TIMEOUT_MS      = 60000;  // 60s 无命令 → 锁定
+constexpr uint32_t CMD_TIMEOUT_MS      = 2000;   // 2s 无命令 → 锁定 (X5 指令间隔 50ms)
 constexpr uint32_t STATUS_INTERVAL_MS  = 200;    // 5Hz 状态输出
 constexpr int      DIR_THRESHOLD       = 20;     // 方向判定阈值 (μs)
 

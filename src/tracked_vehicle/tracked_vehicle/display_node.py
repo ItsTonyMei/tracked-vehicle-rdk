@@ -2,6 +2,7 @@
 """本地屏显 — 手势锁定跟随"""
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 from ai_msgs.msg import PerceptionTargets
 import cv2
@@ -9,6 +10,11 @@ import numpy as np
 
 
 class DisplayNode(Node):
+    """本地屏显 — 手势锁定跟随.
+
+    所有回调与 render 运行在默认 SingleThreadedExecutor 上，无需显式同步。
+    若切换为 MultiThreadedExecutor，需为 _frame/_targets/_locked_id 加锁。
+    """
     def __init__(self):
         super().__init__('display_node')
         self.bbox_ref = self.declare_parameter('bbox_ref_width', 500.0).value
@@ -19,12 +25,21 @@ class DisplayNode(Node):
         self._targets = None
         self._locked_id = None    # 手势锁定的 track_id
         self._gesture_ts = 0.0     # 手势时间戳
+        self._last_det_ts = 0.0    # 最近一次检测数据时间戳
         self._gesture_votes = {}   # 手势投票 {code: count}
         self._VOTE_THRESHOLD = 30  # 连续30帧相同手势触发 (手势检测~60fps, 约0.5s)
         self._flash = 0            # 锁框闪烁计数
         self._flash_color = (0, 255, 0)
         self._window = 'RDK X5 Tracker'
         self._init_display()
+
+        # QoS: 相机帧用 BEST_EFFORT 避免背压; AI 检测用 BEST_EFFORT 深度 5
+        qos_img = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        qos_det = QoSProfile(depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+        self.sub_img = self.create_subscription(CompressedImage, '/image', self.img_cb, qos_img)
+        self.sub_det = self.create_subscription(PerceptionTargets, '/hobot_mono2d_body_detection', self.det_cb, qos_det)
+        self.sub_ges = self.create_subscription(PerceptionTargets, '/hobot_hand_gesture_detection', self.gesture_cb, qos_det)
+        self.timer = self.create_timer(0.1, self.render)  # 10Hz
 
     def _init_display(self):
         cv2.namedWindow(self._window, cv2.WINDOW_NORMAL)
@@ -39,6 +54,7 @@ class DisplayNode(Node):
 
     def det_cb(self, msg: PerceptionTargets):
         self._targets = msg
+        self._last_det_ts = self.get_clock().now().nanoseconds / 1e9
 
     def gesture_cb(self, msg: PerceptionTargets):
         """手势回调: 投票防抖, OK(11)=锁定, Palm(5)=解除"""
@@ -73,6 +89,9 @@ class DisplayNode(Node):
     def _on_ok(self, now):
         """锁定画面中面积最大的人"""
         if self._targets is None:
+            return
+        if now - self._last_det_ts > 0.5:  # 拒绝超过 500ms 的过期检测数据
+            self.get_logger().warn('检测数据过期，忽略锁定')
             return
         best = None
         best_area = 0
@@ -188,10 +207,5 @@ class DisplayNode(Node):
 
 def main():
     rclpy.init()
-    node = DisplayNode()
-    node.sub_img = node.create_subscription(CompressedImage, '/image', node.img_cb, 10)
-    node.sub_det = node.create_subscription(PerceptionTargets, '/hobot_mono2d_body_detection', node.det_cb, 10)
-    node.sub_ges = node.create_subscription(PerceptionTargets, '/hobot_hand_gesture_detection', node.gesture_cb, 10)
-    node.timer = node.create_timer(0.1, node.render)  # 10Hz, 平衡流畅度与CPU
-    rclpy.spin(node)
+    rclpy.spin(DisplayNode())
     rclpy.shutdown()

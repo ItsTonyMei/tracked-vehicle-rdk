@@ -111,36 +111,39 @@ static void beepInit() {
     pinMode(PIN_BUZZER, OUTPUT);
     digitalWrite(PIN_BUZZER, LOW);
 }
-static void beep(int ms)  { digitalWrite(PIN_BUZZER, HIGH); delay(ms); digitalWrite(PIN_BUZZER, LOW); }
-static void beepArm()     { beep(60); delay(60); beep(60); }
-static void beepDisarm()  { beep(250); }
 
-// 非阻塞蜂鸣 (用于模式切换等不能阻塞主循环的场景)
+// 非阻塞蜂鸣: count=次数, durMs=每次鸣响时长(ms), gap duration = durMs
 static uint32_t beepEndMs   = 0;
-static uint8_t  beepPattern = 0;  // 0=idle, 1=单声, 2=双声gap, 3=双声
-static void beepNonBlocking(int count) {
-    beepPattern = count * 2 - 1;  // 1→1(单声), 2→3(双声: on→gap→on)
+static uint8_t  beepPattern = 0;  // 0=idle, 1=beeping, 2=gap
+static uint8_t  beepCount   = 0;
+static uint16_t beepDurMs   = 60;
+
+static void beepNonBlocking(int count, uint16_t durMs = 60) {
+    beepCount   = count;
+    beepDurMs   = durMs;
     beepEndMs   = millis();
     digitalWrite(PIN_BUZZER, HIGH);
+    beepPattern = 1;
 }
+
 static void beepPoll() {
     if (beepPattern == 0) return;
     uint32_t now = millis();
-    if (beepPattern == 2) {  // gap between double beep
-        if (now - beepEndMs >= 60) {
-            digitalWrite(PIN_BUZZER, HIGH);
-            beepEndMs   = now;
-            beepPattern = 1;  // second beep
-        }
-    } else {  // beep on (pattern 1 or 3)
-        if (now - beepEndMs >= 60) {
+    if (beepPattern == 1) {  // beeping
+        if (now - beepEndMs >= beepDurMs) {
             digitalWrite(PIN_BUZZER, LOW);
-            if (beepPattern == 3) {
-                beepEndMs = now;
+            if (--beepCount > 0) {
+                beepEndMs   = now;
                 beepPattern = 2;  // gap
             } else {
                 beepPattern = 0;  // done
             }
+        }
+    } else {  // gap (pattern 2)
+        if (now - beepEndMs >= beepDurMs) {
+            digitalWrite(PIN_BUZZER, HIGH);
+            beepEndMs   = now;
+            beepPattern = 1;  // beeping
         }
     }
 }
@@ -166,18 +169,18 @@ static HardwareSerial SerialSbus(PIN_SBUS_RX, PA2);
 
 static void sbusInit() {
     SerialSbus.begin(SBUS_BAUD);
-    uint32_t cr1 = USART2->CR1;
-    cr1 |= USART_CR1_M;
-    cr1 |= USART_CR1_PCE;
-    USART2->CR1 = cr1;
+    // RM0008: M and PCE bits must be changed only when UE=0
+    USART2->CR1 &= ~USART_CR1_UE;
+    USART2->CR1 |= USART_CR1_M | USART_CR1_PCE;
     USART2->CR2 |= USART_CR2_STOP_0 | USART_CR2_STOP_1;
+    USART2->CR1 |= USART_CR1_UE;
     Serial.println("[SBUS] USART2 PA3 @ 100k 8E2 (WFLY)");
 }
 
 static bool sbusParseFrame(const uint8_t *frame, uint16_t *channels) {
     if (frame[0] != 0x0F) return false;
-    if (frame[23] & 0x04) return false;   // lost frame
-    // WFLY RF209S byte24 varies, skip check
+    // Parse channels regardless of flag bits — flags are handled by caller
+    // WFLY RF209S byte24 varies, skip end-byte check
 
     channels[0]  = ((frame[1]      ) | (frame[2]  << 8)) & 0x07FF;
     channels[1]  = ((frame[2]  >> 3) | (frame[3]  << 5)) & 0x07FF;
@@ -221,11 +224,19 @@ static void sbusPoll() {
         if (!ok) continue;  // 帧不完整, 丢弃
 
         if (sbusParseFrame(frame, g_sbus.channels)) {
-            g_sbus.failsafe    = frame[23] & 0x10;
+            // Read flags from byte23: bit2=lost_frame, bit4=failsafe (WFLY RF209S non-standard)
             g_sbus.lostFrame   = frame[23] & 0x04;
+            g_sbus.failsafe    = frame[23] & 0x10;
             g_sbus.lastFrameMs = millis();
-            if (++g_sbus.goodFrames >= 5) {
-                g_sbus.valid = true;
+
+            // lost_frame treated as failsafe — prevents control until good frame returns
+            if (g_sbus.lostFrame) {
+                g_sbus.failsafe = true;
+            }
+            if (!g_sbus.failsafe) {
+                if (++g_sbus.goodFrames >= 5) {
+                    g_sbus.valid = true;
+                }
             }
         }
     }
@@ -365,6 +376,12 @@ void setup() {
     g_lastCmdMs  = millis();
     escSet(PWM_NEUTRAL, PWM_NEUTRAL);
 
+    // IWDG: ~4s timeout, prescaler 128 → 40kHz/128 = 312.5 Hz, reload = 1250 → 4.0s
+    IWDG->KR = 0x5555;   // unlock
+    IWDG->PR = 5;        // prescaler 128
+    IWDG->RLR = 1249;    // timeout ≈ (1249+1)/312.5 = 4.0s
+    IWDG->KR = 0xCCCC;   // start
+
     Serial.println("READY. 3s ESC自检后, CH5 ARM 或 X5发指令.\n");
 }
 
@@ -396,7 +413,7 @@ void loop() {
         Serial.println("[SBUS] 信号丢失");
         g_motorArmed = false;
         escSet(PWM_NEUTRAL, PWM_NEUTRAL);
-        beepDisarm();
+        beepNonBlocking(1, 250);  // long beep: disarm
         sbusWasValid = false;
     }
     if (g_sbus.valid && !sbusWasValid) {
@@ -441,7 +458,7 @@ void loop() {
                 ch5Armed = true;
                 if (!g_motorArmed) {
                     g_motorArmed = true;
-                    beepArm();
+                    beepNonBlocking(2);  // double beep: arm
                     Serial.println("[SBUS] ARMED (CH5 HIGH)");
                 }
             } else if (!ch5High && ch5Armed) {
@@ -449,7 +466,7 @@ void loop() {
                 if (g_motorArmed) {
                     g_motorArmed = false;
                     escSet(PWM_NEUTRAL, PWM_NEUTRAL);
-                    beepDisarm();
+                    beepNonBlocking(1, 250);  // long beep: disarm
                     Serial.println("[SBUS] DISARMED (CH5 LOW)");
                 }
             }
@@ -485,7 +502,7 @@ void loop() {
         if (g_motorArmed && now - g_lastCmdMs > CMD_TIMEOUT_MS) {
             g_motorArmed = false;
             escSet(PWM_NEUTRAL, PWM_NEUTRAL);
-            beepDisarm();
+            beepNonBlocking(1, 250);  // long beep: disarm
             Serial.println("[SAFE] 命令超时 60s, 自动锁定!");
         }
     }
@@ -561,4 +578,6 @@ void loop() {
         lastImu = now;
         mpu9250Read();
     }
+
+    IWDG->KR = 0xAAAA;  // reload watchdog
 }

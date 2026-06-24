@@ -5,9 +5,10 @@ from glob import glob
 package_name = 'tracked_vehicle'
 
 # 收集 launch 和 config 文件 (相对于项目根目录)
-project_root = os.path.join(os.path.dirname(__file__), '..', '..')
-launch_files = glob(os.path.join(project_root, 'launch', '*.py'))
-config_files = glob(os.path.join(project_root, 'config', '*.yaml'))
+# colcon requires relative paths for data_files; resolves via setup.py location
+_pkg_root = os.path.join(os.path.dirname(__file__), '..', '..')
+launch_files = glob(os.path.join(_pkg_root, 'launch', '*.py'))
+config_files = glob(os.path.join(_pkg_root, 'config', '*.yaml'))
 
 setup(
     name=package_name,
@@ -21,7 +22,7 @@ setup(
         ('share/' + package_name + '/config', config_files),
     ],
     install_requires=['setuptools'],
-    zip_safe=True,
+    zip_safe=False,  # data_files 必须解压后才能被 colcon 正确引用
     maintainer='sunrise',
     maintainer_email='sunrise@rdkx5.local',
     description='6WD heavy tracked vehicle — RDK X5 autonomous follower',

@@ -28,6 +28,8 @@ from ament_index_python import get_package_share_directory
 
 
 def generate_launch_description():
+    log_level = LaunchConfiguration('log_level', default='warn')
+
     # ── 1. 共享内存 ───────────────────────────────────
     shm = IncludeLaunchDescription(PythonLaunchDescriptionSource([
         get_package_share_directory('hobot_shm'), '/launch/hobot_shm.launch.py']))
@@ -58,14 +60,14 @@ def generate_launch_description():
         parameters=[{'model_file_name': 'config/multitask_body_head_face_hand_kps_960x544.hbm',
                      'model_type': 0,
                      'ai_msg_pub_topic_name': '/hobot_mono2d_body_detection'}],
-        arguments=['--ros-args', '--log-level', 'warn'])
+        arguments=['--ros-args', '--log-level', log_level])
 
     # ── 5. 手部关键点 ─────────────────────────────────
     hand_lmk = Node(package='hand_lmk_detection', executable='hand_lmk_detection',
         output='screen',
         parameters=[{'ai_msg_pub_topic_name': '/hobot_hand_lmk_detection',
                      'ai_msg_sub_topic_name': '/hobot_mono2d_body_detection'}],
-        arguments=['--ros-args', '--log-level', 'warn'])
+        arguments=['--ros-args', '--log-level', log_level])
 
     # ── 6. 手势识别 ───────────────────────────────────
     hand_gesture = Node(package='hand_gesture_detection', executable='hand_gesture_detection',
@@ -73,7 +75,7 @@ def generate_launch_description():
         parameters=[{'ai_msg_pub_topic_name': '/hobot_hand_gesture_detection',
                      'ai_msg_sub_topic_name': '/hobot_hand_lmk_detection',
                      'is_dynamic_gesture': False, 'time_interval_sec': 0.25}],
-        arguments=['--ros-args', '--log-level', 'warn'])
+        arguments=['--ros-args', '--log-level', log_level])
 
     # ── 7. 跟随策略 (手势唤醒版) ──────────────────────
     body_track = Node(package='body_tracking', executable='body_tracking',
@@ -83,7 +85,7 @@ def generate_launch_description():
                      'track_serial_lost_num_thr': 30,
                      'linear_velocity': 0.2, 'angular_velocity': 0.4,
                      'activate_robot_move_thr': 5}],
-        arguments=['--ros-args', '--log-level', 'warn'])
+        arguments=['--ros-args', '--log-level', log_level])
 
     # ── 8. Web 可视化 ─────────────────────────────────
     web = IncludeLaunchDescription(PythonLaunchDescriptionSource([
@@ -104,5 +106,7 @@ def generate_launch_description():
         parameters=[{'rotate_deg': 0}])
 
     return LaunchDescription([
+        DeclareLaunchArgument('log_level', default_value='warn',
+                              description='ROS2 log level: debug, info, warn, error, fatal'),
         shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, web, bridge, display,
     ])
