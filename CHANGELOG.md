@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-06-24
+
+### Fixed (P0 — Critical)
+
+- **CRC-8 位溢出** — `cmd_vel_bridge.py` 移位循环加 `& 0xFF` 掩码，与 STM32 `uint8_t` 行为一致
+- **IWDG 硬件看门狗** — STM32 启用独立看门狗 4s 超时，`loop()` 末尾喂狗
+- **SBUS 帧丢失盲区** — `lost_frame` 不再拒绝整帧，改为设置 `failsafe=true` 阻断手动控制
+- **USART 寄存器违规** — `sbusInit()` 先禁用 USART (UE=0) 再修改 M/PCE 位
+- **阻塞蜂鸣** — 删除 `beep()`/`beepArm()`/`beepDisarm()`，统一为非阻塞蜂鸣状态机
+
+### Fixed (P1 — High)
+
+- **QoS** — `display_node` 相机帧/检测订阅改用 `BEST_EFFORT` (depth=1/5)
+- **过期检测保护** — `_on_ok` 拒绝超过 500ms 的过期检测数据
+- **看门狗空转** — `cmd_vel_bridge` 检查间隔 0.5s→`min(5s, timeout/10)`
+- **串口自动重连** — 写失败时尝试关闭重开串口
+- **CMD_TIMEOUT** — STM32 侧从 60s 降至 2s (X5 指令间隔约 30ms)
+- **代码规范** — 订阅移入 `__init__()`，`zip_safe=False`，`log_level` 可配置
+- **文档去重** — `lessons-learned.md` 与 `main.cpp` 交叉引用
+
+### Fixed (P2 — Medium)
+
+- **坦克混控去重** — 提取 `computeMix()` 消除两处重复计算
+- **MPU9250 PLL** — 时钟源从内部振荡器改为 PLL+GyroX (0x01)，提升陀螺仪精度
+- **手势多目标** — `gesture_cb` 遍历所有目标累积投票
+- **PEP8** — `display_node.py` 修复分号语句
+- **steering_invert** — `cmd_vel_bridge` 添加可配置转向方向参数
+- **移除死代码** — `g_sbus.armedPrev` 未使用字段
+
+### Added
+
+- **flash_stm32.sh** — STM32 一键烧录脚本 (stm32flash + bootloader 轮询, 30s 窗口)
+- **udev 端口固定** — `/etc/udev/rules.d/99-tracked-vehicle.rules` CH340N→`/dev/stm32_board`
+- **烧录经验文档** — `memory/stm32-flash-experience.md` (6 条踩坑 + 恢复流程)
+
 ## [0.5.0] - 2026-06-22
 
 ### Added

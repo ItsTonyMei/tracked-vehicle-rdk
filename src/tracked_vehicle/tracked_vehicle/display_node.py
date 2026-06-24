@@ -38,7 +38,8 @@ class DisplayNode(Node):
         qos_det = QoSProfile(depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT)
         self.sub_img = self.create_subscription(CompressedImage, '/image', self.img_cb, qos_img)
         self.sub_det = self.create_subscription(PerceptionTargets, '/hobot_mono2d_body_detection', self.det_cb, qos_det)
-        self.sub_ges = self.create_subscription(PerceptionTargets, '/hobot_hand_gesture_detection', self.gesture_cb, qos_det)
+        self.sub_ges = self.create_subscription(
+            PerceptionTargets, '/hobot_hand_gesture_detection', self.gesture_cb, qos_det)
         self.timer = self.create_timer(0.1, self.render)  # 10Hz
 
     def _init_display(self):
@@ -166,8 +167,9 @@ class DisplayNode(Node):
                 cv2.rectangle(frame, (x1, y1 - 24), (x1 + 160, y1), box_color, -1)
                 cv2.putText(frame, label, (x1 + 4, y1 - 6),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                bx, by = x1 + int(r.width)//2, y1 + int(r.height)//2
-                cv2.line(frame, (bx, by), (orig_w//2, orig_h//2), (255, 0, 255), 1)
+                bx = x1 + int(r.width) // 2
+                by = y1 + int(r.height) // 2
+                cv2.line(frame, (bx, by), (orig_w // 2, orig_h // 2), (255, 0, 255), 1)
 
         # 中心十字
         cx0, cy0 = orig_w // 2, orig_h // 2
@@ -184,14 +186,14 @@ class DisplayNode(Node):
         scale = max(scr_w / fw, scr_h / fh)
         nw, nh = int(fw * scale), int(fh * scale)
         frame = cv2.resize(frame, (nw, nh))
-        sx, sy = (nw - scr_w)//2, (nh - scr_h)//2
-        frame = frame[sy:sy+scr_h, sx:sx+scr_w]
+        sx, sy = (nw - scr_w) // 2, (nh - scr_h) // 2
+        frame = frame[sy:sy + scr_h, sx:sx + scr_w]
         h = frame.shape[0]
 
         # 手势闪框
         if self._flash > 0:
             t = max(1, self._flash // 3)
-            cv2.rectangle(frame, (0, 0), (scr_w-1, scr_h-1), self._flash_color, t)
+            cv2.rectangle(frame, (0, 0), (scr_w - 1, scr_h - 1), self._flash_color, t)
             self._flash -= 1
 
         # 状态条

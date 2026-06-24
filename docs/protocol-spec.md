@@ -17,11 +17,11 @@
 - **发送间隔**: 跟随 /cmd_vel topic 发布频率（body_tracking 约 30Hz）
 - **范围**: throttle/steering 均为 1000-2000μs (uint16)
 - **停止值**: throttle=1500, steering=1500
-- **超时**: 60s 无有效帧 → STM32 自动切中位 + 蜂鸣锁定
+- **超时**: 2s 无有效帧 → STM32 自动切中位 + 蜂鸣锁定 (CMD_TIMEOUT_MS=2000)
 
 ### 坦克混控 (STM32 端)
 
-```
+```text
 sOff = steering - 1500
 left  = throttle + sOff    (钳位 1000-2000)
 right = throttle - sOff    (钳位 1000-2000)
@@ -59,7 +59,7 @@ X5 通过 Micro USB → CH340N → STM32 USART1 (PA9/PA10) 发送 MotorCmd。同
 
 ### 11-bit 通道解包
 
-```
+```text
 ch[0]  = (buf[1]      | buf[2] << 8) & 0x07FF
 ch[1]  = (buf[2] >> 3 | buf[3] << 5) & 0x07FF
 ch[2]  = (buf[3] >> 6 | buf[4] << 2 | buf[5] << 10) & 0x07FF
@@ -79,7 +79,7 @@ ch[2]  = (buf[3] >> 6 | buf[4] << 2 | buf[5] << 10) & 0x07FF
 
 ### SBUS → PWM 映射
 
-```
+```text
 SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 死区: ±20 (约 ±5% 摇杆行程)
 灵敏度: ±250μs (满杆偏移)
@@ -87,16 +87,16 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 
 ### 控制优先级 (含 CH6 模式)
 
-```
+```text
 手控模式 (CH6=LOW):
   SBUS 遥控器 (CH5=ARMED)  ▸  最高优先, 摇杆直控
   X5 自主指令               ▸  次优先
-  超时刹停 (60s)             ▸  安全兜底
+  超时刹停 (2s)             ▸  安全兜底
 
 自动模式 (CH6=HIGH):
   X5 自主指令               ▸  优先
   SBUS CH5=LOCK             ▸  可紧急刹停
-  超时刹停 (60s)             ▸  安全兜底
+  超时刹停 (2s)             ▸  安全兜底
 ```
 
 ### SBUS 信号防抖
@@ -122,7 +122,7 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 
 ## 3. VIS 帧 — OpenMV → X5 (参考)
 
-```
+```text
 格式: "VIS:cx,cy,w,h,feetY,conf,PERSON,distScore,tofDist*CRC8\r\n"
 波特率: 4800 bps
 校验: XOR checksum (payload 部分, 不含 VIS: 前缀)
@@ -134,7 +134,7 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 
 ## 4. 上行遥测 — STM32 → X5 (预留)
 
-```
+```text
 [0xBB][EncL:2B][EncR:2B][CurL:1B][CurR:1B][Flags:1B][ErrCode:1B][CRC8:1B]
 10 bytes
 ```

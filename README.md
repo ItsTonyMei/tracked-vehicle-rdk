@@ -163,31 +163,29 @@ tracked-vehicle-rdk/
 ├── launch/                           # 🚀 ROS2 launch 文件
 │   ├── stereo_vision.launch.py       #    ✅ 双目采集 + StereoNet 深度图
 │   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
-│   ├── full_system_tracking.launch.py#    ✅ (已合并到 person_follow)
-│   ├── person_follow.launch.py       #    ✅ 手势唤醒人体跟随
+│   ├── full_system_tracking.launch.py#    ✅ (已合并到 person_follow, 文件已移除)
+│   ├── person_follow.launch.py       #    ✅ 手势唤醒人体跟随 (10 节点流水线)
 │   └── full_system.launch.py         #    ⬜ 全传感器一键全系统启动
 │
-├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.5.0)
-│   ├── setup.py                      #    ✅ colcon 构建配置
+├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.5.1)
+│   ├── setup.py                      #    ✅ colcon 构建配置 (zip_safe=False)
 │   ├── setup.cfg                     #    ✅ 可执行文件路径
 │   ├── package.xml                   #    ✅ ROS2 依赖声明
 │   ├── resource/tracked_vehicle      #    ✅ 包标记文件
 │   ├── tracked_vehicle/              #    核心 Python 模块
 │   │   ├── __init__.py               #    ✅ 包初始化
-│   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接
-│   │   ├── display_node.py           #    ✅ HDMI 屏显 + 手势锁定
-│   │   ├── follow_logic.py           #    ⬜ distScore 跟随算法 (待移植)
-│   │   ├── person_tracker.py         #    ✅ (已集成到 body_tracking, 文件已移除)
-│   │   └── ...                       #    ⬜ 更多感知与控制模块
-│   └── scripts/                      # 🔧 工具脚本
-│       └── camera_info_repub.py  (已移除, stereonet 内部处理)      #    ✅ camera_info 尺寸缩放
+│   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接 (CRC-8/自动重连/可配置转向)
+│   │   └── display_node.py           #    ✅ HDMI 屏显 + 手势锁定 (BEST_EFFORT QoS/过期数据保护)
+│   └── scripts/                      # 🔧 工具脚本 (已移除 stereonet 内部处理)
 │
-├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交)
-├── stm32_firmware/                   # 🔩 STM32 扩展板固件 ✅
+├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交) ✅
+├── stm32_firmware/                   # 🔩 STM32 扩展板固件 v3.2 ✅
 │   ├── platformio.ini                #    PlatformIO 构建 (STM32F103RCT6)
+│   ├── flash_stm32.sh                #    ✅ 一键烧录脚本 (stm32flash + bootloader 轮询)
+│   ├── firmware.bin                  #    预编译固件 (不提交 git)
 │   └── src/
-│       ├── main.cpp                  #    SBUS + MotorCmd + 坦克混控 + 安全
-│       └── config.h                  #    引脚定义与协议常量
+│       ├── main.cpp                  #    IWDG + SBUS修复 + 坦克混控 + 非阻塞蜂鸣
+│       └── config.h                  #    引脚/协议常量 (CMD_TIMEOUT_MS=2s)
 ├── openmv_rear/                      # 👁️ 后视辅助 ⬜
 └── tests/                            # 🧪 单元测试 ⬜
 ```
@@ -208,7 +206,7 @@ tracked-vehicle-rdk/
 | 5 | `CRC8` | CRC-8-MAXIM 校验 |
 
 - 波特率：**115200 bps**
-- 发送间隔：**50ms**
+- 发送间隔：**跟随 /cmd_vel 发布频率**（body_tracking 约 30Hz）
 - 停止值：`throttle=1500, steering=1500`
 
 ### PWM 输出 — STM32 → 电调
@@ -239,11 +237,13 @@ tracked-vehicle-rdk/
 | 层级 | 机制 | 描述 |
 |------|------|------|
 | L1 | **SBUS 遥控器优先** | 遥控器直连 STM32，指令硬件级优先于 X5 |
-| L2 | **命令超时刹停** | X5 超过 60s 无新 MotorCmd → STM32 自动切中位 |
-| L3 | **X5 安全看门狗** | ROS2 节点心跳监控，异常时主动发停止指令 |
+| L1.5 | **IWDG 硬件看门狗** | STM32 独立看门狗 4s 超时，主循环异常时自动复位 MCU → ESC 掉信号刹停 |
+| L2 | **命令超时刹停** | X5 超过 2s 无新 MotorCmd → STM32 自动切中位 + 蜂鸣锁定 |
+| L3 | **X5 安全看门狗** | ROS2 节点看门狗 (5s 间隔)，60s 无 /cmd_vel → 发停止帧 |
 | L4 | **电调物理保护** | ZTW Seal G2 内置过流/过热/堵转保护 |
-| L5 | **视觉丢帧暂留** | 人体检测丢失 ≤5 帧维持上一指令，避免急刹 |
-| L6 | **激光雷达紧急制动** ⬜ | 检测到障碍物 < 安全距离 → 强制减速/停止 (待M6接入) |
+| L5 | **视觉丢帧暂留** | 人体检测丢失 ≤30 帧维持上一指令，避免急刹 |
+| L6 | **串口自动恢复** | cmd_vel_bridge 写失败自动重连 + 节点销毁时正确关闭串口 |
+| L7 | **激光雷达紧急制动** ⬜ | 检测到障碍物 < 安全距离 → 强制减速/停止 (待 M6 接入) |
 
 ---
 

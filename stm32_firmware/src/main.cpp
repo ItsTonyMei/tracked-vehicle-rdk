@@ -5,12 +5,13 @@
  *   1. SBUS 接收 (USART2 PA3, 100k 8E2, 三极管反相) — WFLY RF209S 适配
  *   2. X5 MotorCmd 解析 (USART1 PA9/PA10, CH340N, 115200) — 6字节 CRC8 帧
  *   3. 坦克混控 + 双路 ESC PWM (S1=PC3/左, S2=PC2/右, Servo 库 50Hz)
- *   4. 控制优先级: 手控 SBUS(CH5 ARM) > 自动 X5 > 60s 超时刹停
- *   5. CH5 ARM/DISARM 防抖 (3帧确认) + 信号丢失需手动重新 ARM
- *   6. CH6 手控/自动模式切换 (LOW=手控, HIGH=自动) + 非阻塞蜂鸣提示
- *   7. SBUS 信号防抖: 5帧确认有效, 2次连续超时判丢失
- *   8. 蜂鸣器(PC5) + LED(PC13, active-LOW) 快/中/慢三速闪烁
- *   9. MPU9250 IMU SPI2 (PB12-15) 姿态读取
+ *   4. 控制优先级: 手控 SBUS(CH5 ARM) > 自动 X5 > 2s 命令超时刹停
+ *   5. IWDG 独立看门狗 (4s 超时, loop 末尾喂狗)
+ *   6. CH5 ARM/DISARM 防抖 (3帧确认) + 信号丢失需手动重新 ARM
+ *   7. CH6 手控/自动模式切换 (LOW=手控, HIGH=自动) + 非阻塞蜂鸣提示
+ *   8. SBUS 信号防抖: 5帧确认有效, 2次连续超时判丢失
+ *   9. 蜂鸣器(PC5) + LED(PC13, active-LOW) 快/中/慢三速闪烁
+ *  10. MPU9250 IMU SPI2 (PB12-15) 姿态读取 (PLL 时钟源)
  *
  * 踩坑记录:
  *   - genericSTM32F103RC Serial 默认不映射 USART1, 需显式 setRx/setTx
