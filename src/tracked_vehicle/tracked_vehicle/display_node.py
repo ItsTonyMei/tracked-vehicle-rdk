@@ -246,9 +246,9 @@ class DisplayNode(Node):
     _LABEL_H = 32
     _DOT_R = 7  # 状态指示灯半径
 
-    # CPU 使用率需要两次采样——缓存上一次的 jiffies
-    _prev_cpu_jiffies = None
-    _prev_cpu_ts = 0.0
+    # CPU 使用率需要两次 /proc/stat 采样——缓存上一次的 total/idle
+    _prev_cpu_total = 0
+    _prev_cpu_idle = 0
 
     @staticmethod
     def _read_sys_info():
@@ -304,12 +304,12 @@ class DisplayNode(Node):
                 jiffies = [int(x) for x in fields]
                 total = sum(jiffies)
                 idle = jiffies[3] + (jiffies[4] if len(jiffies) > 4 else 0)  # idle + iowait
-                if self._prev_cpu_jiffies is not None:
-                    d_total = total - self._prev_total
-                    d_idle = idle - self._prev_idle
+                if self._prev_cpu_total > 0:
+                    d_total = total - self._prev_cpu_total
+                    d_idle = idle - self._prev_cpu_idle
                     self._cpu_pct = (d_total - d_idle) / d_total * 100.0 if d_total > 0 else 0.0
-                self._prev_total = total
-                self._prev_idle = idle
+                self._prev_cpu_total = total
+                self._prev_cpu_idle = idle
             except Exception:
                 self._cpu_pct = 0.0
 
