@@ -20,9 +20,10 @@ class VoiceBridge(Node):
     动作持续 3 秒后自动停止 (可配置).
     """
 
-    # 出厂固件命令词映射 (ID → (动作名, (vx, vy, angular_z)))
-    # 已通过实际语音测试确认 (2025-06-25)
+    # 出厂固件命令词映射 (来源: 产品级串口协议列表V3 + 实测验证)
+    # 接收帧: AA 55 00 [ID] FB → ID 为命令编号
     CMD_MAP = {
+        # 运动控制
         0: ('STOP', (0.0, 0.0, 0.0)),
         4: ('FORWARD', (0.5, 0.0, 0.0)),
         5: ('BACKWARD', (-0.3, 0.0, 0.0)),
@@ -30,9 +31,13 @@ class VoiceBridge(Node):
         7: ('TURN_RIGHT', (0.2, 0.0, -0.4)),
         8: ('SPIN_LEFT', (0.0, 0.0, 0.5)),
         9: ('SPIN_RIGHT', (0.0, 0.0, -0.5)),
-        # 以下 ID 已发现但未映射车辆动作:
-        # 11, 12, 22, 27, 28, 33, 111 — 说出对应词后可补充
+        # 跟随模式
+        27: ('FOLLOW_ON', (0.0, 0.0, 0.0)),
+        28: ('FOLLOW_OFF', (0.0, 0.0, 0.0)),
     }
+
+    # 跟随控制: 语音 "打开跟随" 后 body_tracking 接管; "关闭跟随" 后停止
+    _follow_active = True  # 默认允许手势跟随
 
     def __init__(self):
         super().__init__('voice_bridge')
@@ -104,6 +109,17 @@ class VoiceBridge(Node):
 
         name, (vx, vy, az) = self.CMD_MAP[cmd_id]
         now = self.get_clock().now().nanoseconds / 1e9
+
+        if name == 'FOLLOW_ON':
+            self._follow_active = True
+            self.get_logger().info('VOICE: FOLLOW_ON — 允许手势跟随')
+            return
+        elif name == 'FOLLOW_OFF':
+            self._follow_active = False
+            self._publish_cmd('STOP', (0.0, 0.0, 0.0))
+            self.get_logger().info('VOICE: FOLLOW_OFF — 停用跟随')
+            return
+
         self._publish_cmd(name, (vx, vy, az))
         self._last_cmd_ts = now
         self._last_cmd_id = cmd_id
