@@ -10,9 +10,8 @@
   5. hand_lmk_det (手部关键点)
   6. hand_gesture_det (OK/Palm 手势)
   7. body_tracking (跟随策略, 发布 /cmd_vel)
-  8. websocket (Web可视化)
-  9. cmd_vel_bridge (/cmd_vel → MotorCmd → STM32)
- 10. display_node (HDMI屏显)
+  8. cmd_vel_bridge (/cmd_vel → MotorCmd → STM32)
+  9. display_node (HDMI屏显)
 
 手势: OK→唤醒跟随, Palm→停止
 用法: ros2 launch tracked_vehicle person_follow.launch.py
@@ -87,13 +86,8 @@ def generate_launch_description():
                      'activate_robot_move_thr': 5}],
         arguments=['--ros-args', '--log-level', log_level])
 
-    # ── 8. Web 可视化 ─────────────────────────────────
-    web = IncludeLaunchDescription(PythonLaunchDescriptionSource([
-        get_package_share_directory('websocket'), '/launch/websocket.launch.py']),
-        launch_arguments={
-            'websocket_image_topic': '/image',
-            'websocket_smart_topic': '/hobot_mono2d_body_detection',
-        }.items())
+    # ── 8. Web 可视化 (已禁用 — 使用板端 HDMI 屏幕替代) ──
+    # web = IncludeLaunchDescription(...)
 
     # ── 9. cmd_vel → MotorCmd ─────────────────────────
     bridge = IncludeLaunchDescription(PythonLaunchDescriptionSource([
@@ -108,5 +102,5 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='warn',
                               description='ROS2 log level: debug, info, warn, error, fatal'),
-        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, web, bridge, display,
+        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, display,
     ])
