@@ -4,6 +4,54 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] - 2026-06-25
+
+### Added
+
+- **目标锁定状态机 v2** — 手势-人体空间匹配 + HOLDING 暂留 + 无人重置
+  - `_match_gesture_to_person()`: 手势 ROI 中心点与 body ROI 空间匹配, 锁定做 OK 的人
+  - HOLDING 状态: 被锁者消失 <5s 维持锁定; 空间重识别 (RE-ID) 自动匹配新 track_id
+  - `_empty_since` 计时器: 画面无人 >10s 自动清除锁定
+  - `det_cb` 基于 body ROI 检测无人 (而非 person type, 后者永远为 True)
+- **X5 系统状态栏** (HDMI 左上角)
+  - CPU%/BPU%/MEM%/TEMP 实时显示 (1Hz 刷新)
+  - 彩色状态指示灯: 绿(<80%) / 黄(<95%) / 红(>=95%)
+  - 节点计数: `pgrep` 后台扫描, 非阻塞; 启动自检消息行
+  - FPS 健康指示灯: 绿>30 / 黄10-30 / 红<10
+- **AI 语音模块集成** — `voice_bridge.py` CI1302 → `/cmd_vel` ROS2 节点
+  - 20Hz 轮询 `/dev/ttyUSB1`, 解析 `AA 55 [STATUS] [ID] FB` 帧
+  - 8 条出厂语音指令映射 (前进/后退/左右转/旋转/停止), 动作 3s 自动停止
+  - `docs/reference/voice_module/`: Speech_Lib + RDKX5/UART/ROS1/ROS2 完整参考
+
+### Changed
+
+- **屏显渲染优化**
+  - 中心十字: 白色加粗 (255,255,255), 线宽 2, 长度 25px
+  - bbox→中心连线: 跟随 bbox 颜色 (锁定=红/未锁=绿/HOLDING=橙), 线宽 2
+  - 闪框颜色语义化: 锁定=红色, 解锁=绿色
+  - 字体放大: FONT_SCALE 0.5→0.7, FONT_THICK 1→2, LABEL_H 24→32
+  - DETECT 行只显示 body ID (去重 head/face/hand)
+- **手势回调修复**: 恢复 early return 防止后续 `gesture=0` 清零投票
+- **手势匹配修复**: `_match_gesture_to_person` 只检查 `hand` 类型 ROI
+- **CPU 占用率修复**: `_prev_cpu_jiffies` 变量名不一致导致始终为 0%
+- **服务单元优化**: 添加 `KillMode=mixed` + `TimeoutStopSec=30` 修复重启卡死
+
+### Removed
+
+- **Web 可视化**: 禁用 websocket 节点 (~14% CPU + 69MB RAM)
+- **nginx**: 停止并禁用 Web 服务器
+- **桌面组件**: 清除 xubuntu-desktop/gnome-shell/lightdm/xfce/snapd (~1.3GB 磁盘)
+- **系统服务**: 禁用 tftpd-hpa/accounts-daemon/rpcbind/udisks2/hobot-suspend-button 等 8 个
+- **EXPECTED_NODES**: 11→10 (websocket 移除); 10→11 (voice_bridge 新增)
+
+### Verified
+
+- 板端 X5 重启后内存 used: 531MB→250MB (idle) / 527MB→490MB (running)
+- 系统服务: 25→17 个
+- 10 节点全链路稳定 (不含语音模块时为 9+1 待启动)
+- STM32 IWDG/SBUS/USART/蜂鸣 修复验证通过
+- CI1302 语音模块协议确认: 115200 8N1, `AA 55 00 [ID] FB`
+
 ## [0.5.1] - 2026-06-24
 
 ### Fixed (P0 — Critical)

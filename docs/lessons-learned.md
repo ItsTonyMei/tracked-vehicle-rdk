@@ -79,3 +79,48 @@
 - OK(11), Palm(5), None(0)
 - 单帧检测不可靠, 需连续 30 帧投票 (>0.5s) + 3s 冷却
 - Palm 只在已锁定时才生效, 避免误解除
+
+## 手势-人体匹配
+
+### 14. 手势消息包含多种 ROI — 需过滤类型
+- `/hobot_hand_gesture_detection` 的 targets 混合 body/head/face/hand 四种 ROI
+- `_match_gesture_to_person` 必须只检查 `groi.type == 'hand'`，否则 body 中心点必然落在自身 rect 内导致误匹配
+
+### 15. 投票循环不可遍历多 target
+- 原代码处理第一个非零手势后立即 `return` 是故意的
+- 移除 `return` 会导致后续 `gesture=0` 将刚积累的 votes[11] 清零，投票永远无法达到阈值 30
+
+### 16. 无人检测需基于 body ROI 而非 person type
+- `mono2d_body_detection` 消息中所有 target (body/head/face/hand) 的 type 均为 `'person'`
+- `any(t.type == 'person')` 永远为 True，`_empty_since` 计时器永不启动
+- 必须改为检查 `any(roi.type == 'body')` — `_has_body()`
+
+### 17. 被锁者重识别 (Re-ID) — 空间匹配应对 ID 变化
+- 检测器内部 tracker 在人短暂消失后会分配新 track_id
+- display_node 的 HOLDING 保留了旧 ID 但人回来时拿到新 ID
+- 解决: 记录锁定者最后已知 body 中心点, HOLDING 期间对新 body 做 150px 距离匹配, 匹配成功则更新 `_locked_id`
+
+## 系统精简
+
+### 18. websocket/nginx 冗余 — 用 HDMI 屏幕替代 Web 显示
+- websocket 节点占 ~14% CPU + 69MB RAM, nginx 占 ~1MB
+- 板端 HDMI 屏幕完全可以替代 Web 可视化
+- 从 `person_follow.launch.py` 移除 websocket launch, EXPECTED_NODES 11→10
+
+### 19. 桌面组件可安全清除
+- xubuntu-desktop/gnome-shell/lightdm/xfce/snapd 等占 ~1.3GB 磁盘
+- 清除后只保留 `xserver-xorg-core` + `xserver-xorg-video-fbdev` + `xinit` (OpenCV 显示必须)
+- 关键: **必须在清除前 `apt-mark manual` 保护 xorg/xinit**, 否则 autoremove 会误删
+
+### 20. 系统服务精简
+- 安全禁用的 8 个服务: tftpd-hpa, accounts-daemon, lightdm, dnsmasq, auto_update_miniboot, hobot-suspend-button, rpcbind, udisks2
+- 效果: 内存 used 531MB→250MB (idle), 服务 25→17 个
+
+### 21. systemd 服务 KillMode 修复
+- `Type=simple` + `ros2 launch` 子进程多, 默认 `KillMode=control-group` 导致 `systemctl restart` 永远等待子进程退出
+- 修复: `/etc/systemd/system/tracked-vehicle-display.service` 添加 `KillMode=mixed` + `TimeoutStopSec=30`
+
+### 22. udev symlink 在启动早期可能未就绪
+- `/dev/stm32_board` symlink 由 udev 规则创建, 但服务启动可能早于 udev 触发
+- `cmd_vel_bridge` 因无法打开串口而静默崩溃
+- 临时方案: `ln -sf /dev/ttyUSB0 /dev/stm32_board` + 重启服务
