@@ -8,6 +8,7 @@ from ai_msgs.msg import PerceptionTargets
 import cv2
 import numpy as np
 import subprocess
+import threading
 
 
 class DisplayNode(Node):
@@ -501,19 +502,23 @@ class DisplayNode(Node):
         cv2.putText(frame, f'TEMP:{temp:.0f}C', (x + 20, row1_y + 8),
                     self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
 
-        # ── 节点计数 (每 5s 通过 pgrep 快速扫描, ~10ms, 不阻塞 render) ──
+        # ── 节点计数 (每 5s 后台线程运行, 不阻塞 render) ──
         now = self.get_clock().now().nanoseconds / 1e9
-        if now - self._node_count_ts > 5.0:
-            try:
-                result = subprocess.run(
-                    ['pgrep', '-c', '-f',
-                     'body_tracking|mono2d_body|display_node|cmd_vel_bridge|'
-                     'hand_lmk|hand_gesture|mipi_cam|hobot_codec|websocket'],
-                    capture_output=True, text=True, timeout=2)
-                self._node_count = int(result.stdout.strip())
-            except Exception:
-                self._node_count = 0
+        if now - self._node_count_ts > 5.0 and not getattr(self, '_node_count_running', False):
+            self._node_count_running = True
             self._node_count_ts = now
+
+            def _count_nodes():
+                try:
+                    r = subprocess.run(
+                        'source /opt/tros/humble/setup.bash && ros2 node list 2>/dev/null | wc -l',
+                        shell=True, executable='/bin/bash',
+                        capture_output=True, text=True, timeout=5)
+                    self._node_count = int(r.stdout.strip())
+                except Exception:
+                    pass
+                self._node_count_running = False
+            threading.Thread(target=_count_nodes, daemon=True).start()
         node_ok = self._node_count >= self._EXPECTED_NODES
         nc = (0, 255, 0) if node_ok else (0, 255, 255)
         x = 10  # 换行对齐到第二行第一列
