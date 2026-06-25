@@ -99,8 +99,12 @@ def generate_launch_description():
         name='display_node', output='screen',
         parameters=[{'rotate_deg': 0}])
 
+    # ── 11. 语音控制 ──────────────────────────────────
+    voice = Node(package='tracked_vehicle', executable='voice_bridge',
+        name='voice_bridge', output='screen')
+
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='warn',
                               description='ROS2 log level: debug, info, warn, error, fatal'),
-        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, display,
+        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, display, voice,
     ])

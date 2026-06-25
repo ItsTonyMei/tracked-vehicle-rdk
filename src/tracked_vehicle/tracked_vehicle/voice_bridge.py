@@ -21,15 +21,17 @@ class VoiceBridge(Node):
     """
 
     # 出厂固件命令词映射 (ID → (动作名, (vx, vy, angular_z)))
+    # 已通过实际语音测试确认 (2025-06-25)
     CMD_MAP = {
         0: ('STOP', (0.0, 0.0, 0.0)),
-        2: ('STOP', (0.0, 0.0, 0.0)),
         4: ('FORWARD', (0.5, 0.0, 0.0)),
         5: ('BACKWARD', (-0.3, 0.0, 0.0)),
         6: ('TURN_LEFT', (0.2, 0.0, 0.4)),
         7: ('TURN_RIGHT', (0.2, 0.0, -0.4)),
         8: ('SPIN_LEFT', (0.0, 0.0, 0.5)),
         9: ('SPIN_RIGHT', (0.0, 0.0, -0.5)),
+        # 以下 ID 已发现但未映射车辆动作:
+        # 11, 12, 22, 27, 28, 33, 111 — 说出对应词后可补充
     }
 
     def __init__(self):
@@ -97,7 +99,7 @@ class VoiceBridge(Node):
     def _on_voice(self, cmd_id):
         """语音命令处理."""
         if cmd_id not in self.CMD_MAP:
-            self.get_logger().debug(f'Unknown command ID: {cmd_id}')
+            self.get_logger().info(f'UNMAPPED voice ID={cmd_id} — needs CMD_MAP entry')
             return
 
         name, (vx, vy, az) = self.CMD_MAP[cmd_id]
