@@ -39,6 +39,11 @@ class DisplayNode(Node):
         self._targets = None
         self._last_det_ts = 0.0
 
+        # ── 节点计数 ──
+        self._EXPECTED_NODES = 11
+        self._node_count = 0
+        self._node_count_ts = 0.0
+
         # ── 手势投票 ──
         self._gesture_ts = 0.0
         self._gesture_votes = {}
@@ -475,7 +480,7 @@ class DisplayNode(Node):
                 c = (0, 255, 0)
             cv2.circle(frame, (x, y), self._DOT_R, c, -1)
 
-        # 第一行: 指示灯 + CPU/BPU/MEM/TEMP
+        # 第一行: 指示灯 + CPU/BPU/MEM/TEMP + 节点计数
         row1_y = 22
         x = 10
         for label, pct in [('CPU', cpu_pct), ('BPU', bpu_pct), ('MEM', mem_pct)]:
@@ -484,7 +489,7 @@ class DisplayNode(Node):
                         self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
             x += 160
 
-        # 温度 (特殊: >80=黄, >90=红)
+        # 温度
         if temp >= 90:
             tc = (0, 0, 255)
         elif temp >= 80:
@@ -495,19 +500,41 @@ class DisplayNode(Node):
         cv2.putText(frame, f'TEMP:{temp:.0f}C', (x + 20, row1_y + 8),
                     self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
 
-        # 第二行: FPS + 跟踪状态
+        # ── 节点计数 (每 10s 刷新, 在 TEMP 右侧) ──
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now - self._node_count_ts > 10.0:
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ['bash', '-c',
+                     'source /opt/tros/humble/setup.bash && ros2 node list 2>/dev/null | wc -l'],
+                    capture_output=True, text=True, timeout=5)
+                self._node_count = int(result.stdout.strip())
+            except Exception:
+                pass
+            self._node_count_ts = now
+        node_ok = self._node_count >= self._EXPECTED_NODES
+        nc = (0, 255, 0) if node_ok else (0, 255, 255)
+        x = 10  # 换行对齐到第二行第一列
         row2_y = 52
-        fps_str = f'FPS:{targets.fps:.0f}' if targets is not None else 'FPS:--'
-        cv2.putText(frame, fps_str, (10, row2_y),
-                    self._FONT, self._FONT_SCALE, (180, 180, 180), self._FONT_THICK)
+        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, nc, -1)
+        cv2.putText(frame, f'{self._node_count}/{self._EXPECTED_NODES} nodes',
+                    (x + 20, row2_y + 8), self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # 人体检测状态指示灯 (基于 body ROI 而非 person type)
+        # FPS (与 CPU 对齐)
+        x = 170
+        fps_str = f'FPS:{targets.fps:.0f}' if targets is not None else 'FPS:--'
+        cv2.putText(frame, fps_str, (x + 20, row2_y + 8),
+                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+
+        # 人体检测状态 (与 BPU 对齐)
+        x = 330
         has_body_now = self._has_body(targets)
-        status_dot_color = (0, 255, 0) if has_body_now else (100, 100, 100)
-        cv2.circle(frame, (130, row2_y - 9), self._DOT_R, status_dot_color, -1)
-        people_text = 'DET' if has_body_now else '---'
-        cv2.putText(frame, people_text, (148, row2_y),
-                    self._FONT, self._FONT_SCALE, (180, 180, 180), self._FONT_THICK)
+        det_dot_color = (0, 255, 0) if has_body_now else (100, 100, 100)
+        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, det_dot_color, -1)
+        det_text = 'DET' if has_body_now else '---'
+        cv2.putText(frame, det_text, (x + 20, row2_y + 8),
+                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
         # ── 状态条 (底部) ──
         bar_y = h - 16
