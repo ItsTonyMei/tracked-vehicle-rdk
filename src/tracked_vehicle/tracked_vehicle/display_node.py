@@ -520,27 +520,30 @@ class DisplayNode(Node):
                 self._node_count_running = False
             threading.Thread(target=_count_nodes, daemon=True).start()
         node_ok = self._node_count >= self._EXPECTED_NODES
-        nc = (0, 255, 0) if node_ok else (0, 255, 255)
-        x = 10  # 换行对齐到第二行第一列
-        row2_y = 52
-        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, nc, -1)
-        cv2.putText(frame, f'{self._node_count}/{self._EXPECTED_NODES} nodes',
-                    (x + 20, row2_y + 8), self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # FPS (与 CPU 对齐)
-        x = 170
+        # 第二行: [dot]FPS:60  [dot]Nodes  [dot]DET (每个有独立彩色指示灯)
+        row2_y = 52
+        x = 10
+        # FPS
         fps_str = f'FPS:{targets.fps:.0f}' if targets is not None else 'FPS:--'
+        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, (100, 100, 100), -1)
         cv2.putText(frame, fps_str, (x + 20, row2_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # 人体检测状态 (与 BPU 对齐)
+        # Nodes
+        x = 170
+        nc = (0, 255, 0) if node_ok else (0, 255, 255)
+        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, nc, -1)
+        cv2.putText(frame, f'Nodes:{self._node_count}/{self._EXPECTED_NODES}',
+                    (x + 20, row2_y + 8), self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+
+        # DET
         x = 330
         has_body_now = self._has_body(targets)
         det_dot_color = (0, 255, 0) if has_body_now else (100, 100, 100)
         cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, det_dot_color, -1)
-        det_text = 'DET' if has_body_now else '---'
-        cv2.putText(frame, det_text, (x + 20, row2_y + 8),
-                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+        cv2.putText(frame, 'DET' if has_body_now else '---',
+                    (x + 20, row2_y + 8), self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
         # ── 状态条 (底部) ──
         bar_y = h - 16
@@ -555,8 +558,14 @@ class DisplayNode(Node):
             color = (0, 0, 255)
             dot_c = (0, 0, 255)
         elif has_body_now:
-            pids = [str(t.track_id) for t in targets.targets if t.type == 'person']
-            status = f'DETECT [{",".join(pids)}] | OK=lock Palm=unlock'
+            # 只显示有 body ROI 的 track_id (去重: 每人有 body+head+face+hand 四个 target)
+            body_ids = []
+            seen = set()
+            for t in targets.targets:
+                if t.track_id not in seen and self._find_body_roi(t) is not None:
+                    body_ids.append(str(t.track_id))
+                    seen.add(t.track_id)
+            status = f'DETECT [{",".join(body_ids)}] | OK=lock Palm=unlock'
             color = (0, 255, 255)
             dot_c = (0, 255, 255)
         else:
