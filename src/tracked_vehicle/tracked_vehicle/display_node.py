@@ -45,6 +45,8 @@ class DisplayNode(Node):
         self._EXPECTED_NODES = 11
         self._node_count = 0
         self._node_count_ts = 0.0
+        self._startup_done = False     # 首次全节点就绪后置 True
+        self._startup_msg = 'STARTING'
 
         # ── 手势投票 ──
         self._gesture_ts = 0.0
@@ -546,7 +548,25 @@ class DisplayNode(Node):
         cv2.putText(frame, f'Nodes:{self._node_count}/{self._EXPECTED_NODES}',
                     (x + 20, row2_y + 8), self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # ── 状态条 (底部) ──
+        # ── 系统自检消息行 (DETECT 上方) ──
+        if not self._startup_done and self._node_count >= self._EXPECTED_NODES:
+            self._startup_done = True
+        if not self._startup_done:
+            sys_msg = f'SYSTEM STARTING... ({self._node_count}/{self._EXPECTED_NODES} nodes)'
+            sys_dot = (0, 255, 255)
+        elif self._node_count >= self._EXPECTED_NODES:
+            sys_msg = 'ALL SYSTEMS GO'
+            sys_dot = (0, 255, 0)
+        else:
+            missing = self._EXPECTED_NODES - self._node_count
+            sys_msg = f'WARN: {missing} node(s) missing ({self._node_count}/{self._EXPECTED_NODES})'
+            sys_dot = (0, 255, 255)
+        sys_y = h - 46
+        cv2.circle(frame, (self._DOT_R + 10, sys_y - 9), self._DOT_R, sys_dot, -1)
+        cv2.putText(frame, sys_msg, (30, sys_y),
+                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+
+        # ── DETECT 状态条 (底部, 颜色块+白色文字) ──
         has_body_now = self._has_body(targets)
         bar_y = h - 16
         if holding:
@@ -554,13 +574,10 @@ class DisplayNode(Node):
                 self.get_clock().now().nanoseconds / 1e9 - self._lost_since))
             status = f'HOLDING #{self._locked_id} {remaining:.1f}s | Palm to release'
             color = (0, 165, 255)
-            dot_c = (0, 165, 255)
         elif self._locked_id:
             status = f'LOCKED #{self._locked_id} | OK to switch, Palm to release'
             color = (0, 0, 255)
-            dot_c = (0, 0, 255)
         elif has_body_now:
-            # 只显示有 body ROI 的 track_id (去重: 每人有 body+head+face+hand 四个 target)
             body_ids = []
             seen = set()
             for t in targets.targets:
@@ -569,14 +586,12 @@ class DisplayNode(Node):
                     seen.add(t.track_id)
             status = f'DETECT [{",".join(body_ids)}] | OK=lock Palm=unlock'
             color = (0, 255, 255)
-            dot_c = (0, 255, 255)
         else:
             status = 'WAITING | OK gesture to lock'
-            color = (0, 0, 255)
-            dot_c = (100, 100, 100)
-        cv2.circle(frame, (self._DOT_R + 10, bar_y - 9), self._DOT_R, dot_c, -1)
+            color = (100, 100, 100)
+        cv2.circle(frame, (self._DOT_R + 10, bar_y - 9), self._DOT_R, color, -1)
         cv2.putText(frame, status, (30, bar_y),
-                    self._FONT, self._FONT_SCALE, color, self._FONT_THICK)
+                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
         cv2.imshow(self._window, frame)
         cv2.waitKey(1)
