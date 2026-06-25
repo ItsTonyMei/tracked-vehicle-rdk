@@ -524,9 +524,18 @@ class DisplayNode(Node):
         # 第二行: [dot]FPS:60  [dot]Nodes  [dot]DET (每个有独立彩色指示灯)
         row2_y = 52
         x = 10
-        # FPS
-        fps_str = f'FPS:{targets.fps:.0f}' if targets is not None else 'FPS:--'
-        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, (100, 100, 100), -1)
+        # FPS (健康指示灯: >30=绿, 10-30=黄, <10=红, 无数据=灰)
+        fps_val = targets.fps if targets is not None else 0
+        if fps_val > 30:
+            fps_dot = (0, 255, 0)
+        elif fps_val > 10:
+            fps_dot = (0, 255, 255)
+        elif fps_val > 0:
+            fps_dot = (0, 0, 255)
+        else:
+            fps_dot = (100, 100, 100)
+        fps_str = f'FPS:{fps_val:.0f}' if fps_val > 0 else 'FPS:--'
+        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, fps_dot, -1)
         cv2.putText(frame, fps_str, (x + 20, row2_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
@@ -537,15 +546,8 @@ class DisplayNode(Node):
         cv2.putText(frame, f'Nodes:{self._node_count}/{self._EXPECTED_NODES}',
                     (x + 20, row2_y + 8), self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # DET
-        x = 330
-        has_body_now = self._has_body(targets)
-        det_dot_color = (0, 255, 0) if has_body_now else (100, 100, 100)
-        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, det_dot_color, -1)
-        cv2.putText(frame, 'DET' if has_body_now else '---',
-                    (x + 20, row2_y + 8), self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
-
         # ── 状态条 (底部) ──
+        has_body_now = self._has_body(targets)
         bar_y = h - 16
         if holding:
             remaining = max(0, self._lost_hold_s - (
