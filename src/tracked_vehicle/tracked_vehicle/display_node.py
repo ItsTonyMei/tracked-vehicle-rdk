@@ -42,7 +42,7 @@ class DisplayNode(Node):
         self._last_det_ts = 0.0
 
         # ── 节点计数 ──
-        self._EXPECTED_NODES = 10
+        self._EXPECTED_NODES = 11
         self._node_count = 0
         self._node_count_ts = 0.0
         self._startup_done = False     # 首次全节点就绪后置 True

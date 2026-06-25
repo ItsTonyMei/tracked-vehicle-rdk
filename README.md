@@ -148,7 +148,8 @@ tracked-vehicle-rdk/
 │   ├── ROS-ExpansionboardV3.0-en-new-20250509.pdf    #    ✅ STM32 扩展板手册
 │   ├── reference/                    #    📦 调试参考存档
 │   │   ├── gs130w_bpu_display_ref.py #       双目 BPU 渲染调试
-│   │   └── gs130w_x11_display_ref.py #       双目 X11 渲染调试
+│   │   ├── gs130w_x11_display_ref.py #       双目 X11 渲染调试
+│   │   └── voice_module/             #    ✅ AI 语音模块参考 (Speech_Lib/UART/ROS1/ROS2)
 │   ├── architecture.md               #    ⬜ 系统架构详细设计
 │   ├── migration-plan.md             #    ⬜ ESP32→X5 分阶段迁移计划
 │   └── safety-design.md              #    ⬜ 安全机制设计文档
@@ -175,7 +176,8 @@ tracked-vehicle-rdk/
 │   ├── tracked_vehicle/              #    核心 Python 模块
 │   │   ├── __init__.py               #    ✅ 包初始化
 │   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接 (CRC-8/自动重连/可配置转向)
-│   │   └── display_node.py           #    ✅ HDMI 屏显 + 手势锁定 (BEST_EFFORT QoS/过期数据保护)
+│   │   ├── display_node.py           #    ✅ HDMI 屏显 + 手势锁定 (系统状态栏/空间重识别)
+│   │   └── voice_bridge.py           #    ✅ AI 语音 → /cmd_vel 桥接 (CI1302/20Hz轮询/3s动作)
 │   └── scripts/                      # 🔧 工具脚本 (已移除 stereonet 内部处理)
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交) ✅

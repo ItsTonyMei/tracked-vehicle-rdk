@@ -31,6 +31,7 @@ setup(
         'console_scripts': [
             'cmd_vel_bridge = tracked_vehicle.cmd_vel_bridge:main',
             'display_node = tracked_vehicle.display_node:main',
+            'voice_bridge = tracked_vehicle.voice_bridge:main',
         ],
     },
 )
