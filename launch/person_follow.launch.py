@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-手势唤醒人体跟随 launch (GS130W rotation=90 适配版)
+语音控制人体跟随 launch (GS130W rotation=90 适配版)
 
 流水线:
   1. hobot_shm (零拷贝)
@@ -9,15 +9,15 @@
   4. mono2d_body_det (人体检测)
   5. hand_lmk_det (手部关键点)
   6. hand_gesture_det (OK/Palm 手势)
-  7. body_tracking (跟随策略, 发布 /cmd_vel)
+  7. body_tracking (跟随策略, cmd_vel → cmd_vel_body_track, voice_bridge 仲裁中继)
   8. cmd_vel_bridge (/cmd_vel → MotorCmd → STM32)
   9. display_node (HDMI屏显)
+ 10. voice_bridge (CI1302 语音 → /cmd_vel 唯一发布者 + 状态机)
 
-手势: OK→唤醒跟随, Palm→停止
+控制层级: RC CH5 ARM → RC CH6 X5模式 → 语音手动(VOICE_MANUAL) → 跟随(FOLLOWING) → 手势锁定
 用法: ros2 launch tracked_vehicle person_follow.launch.py
 """
 
-import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -76,32 +76,35 @@ def generate_launch_description():
                      'is_dynamic_gesture': False, 'time_interval_sec': 0.25}],
         arguments=['--ros-args', '--log-level', log_level])
 
-    # ── 7. 跟随策略 (手势唤醒版) ──────────────────────
+    # ── 7. 跟随策略 (由 voice_bridge 语音控制启停) ─────
+    # /cmd_vel → /cmd_vel_body_track, 交由 voice_bridge 仲裁中继
+    # activate_wakeup_gesture=0: 手势仅锁定/解锁目标, 不独立启动跟随
     body_track = Node(package='body_tracking', executable='body_tracking',
         output='screen',
-        parameters=[{'activate_wakeup_gesture': 1,
+        parameters=[{'activate_wakeup_gesture': 0,
                      'img_width': 960, 'img_height': 544,
                      'track_serial_lost_num_thr': 300,
                      'linear_velocity': 0.2, 'angular_velocity': 0.4,
                      'activate_robot_move_thr': 5}],
-        arguments=['--ros-args', '--log-level', log_level])
+        arguments=['--ros-args', '--log-level', log_level],
+        remappings=[('/cmd_vel', '/cmd_vel_body_track')])
 
-    # ── 8. Web 可视化 (已禁用 — 使用板端 HDMI 屏幕替代) ──
-    # web = IncludeLaunchDescription(...)
-
-    # ── 9. cmd_vel → MotorCmd ─────────────────────────
+    # ── 8. cmd_vel → MotorCmd ─────────────────────────
     bridge = IncludeLaunchDescription(PythonLaunchDescriptionSource([
         get_package_share_directory('tracked_vehicle'),
         '/launch/motor_bridge.launch.py']))
 
-    # ── 10. 屏显 ──────────────────────────────────────
+    # ── 9. 屏显 ──────────────────────────────────────
     display = Node(package='tracked_vehicle', executable='display_node',
         name='display_node', output='screen',
         parameters=[{'rotate_deg': 0}])
 
-    # ── 11. 语音控制 ──────────────────────────────────
+    # ── 10. 语音控制 ──────────────────────────────────
     voice = Node(package='tracked_vehicle', executable='voice_bridge',
-        name='voice_bridge', output='screen')
+        name='voice_bridge', output='screen',
+        parameters=[{'voice_port': '/dev/voice_module',
+                     'voice_baud': 115200,
+                     'action_duration_s': 3.0}])
 
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='warn',

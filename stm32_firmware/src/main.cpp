@@ -477,13 +477,13 @@ void loop() {
             }
         }
 
-        // CH6 模式切换: LOW=手控(SBUS), HIGH=自动(X5)
+        // CH6 模式切换: LOW=手控(SBUS), HIGH=X5模式 (RDK X5决策)
         bool autoMode = sbusActive && (g_sbus.channels[SBUS_CH_MODE] > SBUS_MODE_THRESHOLD);
         static bool lastAutoMode = false;
         if (autoMode != lastAutoMode && sbusActive) {
-            beepNonBlocking(autoMode ? 2 : 1);  // 自动两声, 手控一声 (非阻塞)
+            beepNonBlocking(autoMode ? 2 : 1);  // X5两声, 手控一声 (非阻塞)
             Serial.print("[MODE] 切换到 ");
-            Serial.println(autoMode ? "自动(X5)" : "手控(RC)");
+            Serial.println(autoMode ? "X5(RDK X5)" : "手控(RC)");
         }
         lastAutoMode = autoMode;
 
@@ -494,7 +494,7 @@ void loop() {
             g_lastCmdMs = now;
 
         } else if (autoMode && g_motorArmed && g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS)) {
-            // 自动模式 + 已解锁: X5 指令生效 (需遥控器 CH5=ARM + CH6=AUTO)
+            // X5模式 + 已解锁: X5 指令生效 (需遥控器 CH5=ARM + CH6=HIGH)
             thr = g_x5Throttle;
             str = g_x5Steering;
             g_lastCmdMs = now;
@@ -553,7 +553,7 @@ void loop() {
         const char* state;
         if (sbusOk && g_motorArmed && !autoMode)      state = "RC ARM";
         else if (sbusOk && !g_motorArmed && !autoMode) state = "RC LCK";
-        else if (sbusOk && autoMode)                   state = "AUTO  ";
+        else if (sbusOk && autoMode)                   state = "X5    ";
         else if (x5Ok)                                 state = "X5    ";
         else                                           state = "--------";
 

@@ -5,10 +5,9 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 from ai_msgs.msg import PerceptionTargets
+from std_msgs.msg import Bool
 import cv2
 import numpy as np
-import subprocess
-import threading
 
 
 class DisplayNode(Node):
@@ -41,12 +40,9 @@ class DisplayNode(Node):
         self._targets = None
         self._last_det_ts = 0.0
 
-        # ── 节点计数 ──
-        self._EXPECTED_NODES = 11
-        self._node_count = 0
-        self._node_count_ts = 0.0
-        self._startup_done = False     # 首次全节点就绪后置 True
-        self._startup_msg = 'STARTING'
+        # ── 启动状态 ──
+        self._startup_done = False     # 运行 >30s 后置 True
+        self._start_ts = 0.0           # __init__ 结束后设置
 
         # ── 手势投票 ──
         self._gesture_ts = 0.0
@@ -71,7 +67,11 @@ class DisplayNode(Node):
             PerceptionTargets, '/hobot_mono2d_body_detection', self.det_cb, qos_det)
         self.sub_ges = self.create_subscription(
             PerceptionTargets, '/hobot_hand_gesture_detection', self.gesture_cb, qos_det)
-        self.timer = self.create_timer(0.1, self.render)
+        self.sub_follow = self.create_subscription(
+            Bool, '/follow_active', self.follow_cb, 10)
+        self._follow_active = False
+        self.timer = self.create_timer(0.33, self.render)
+        self._start_ts = self.get_clock().now().nanoseconds / 1e9
 
     # ═══════════════════════════════════════════════════════════════
     # 显示初始化
@@ -263,6 +263,9 @@ class DisplayNode(Node):
                     elif code == 5:
                         self._on_palm(now)
                 return  # 只处理第一个有效手势，防止后续 gesture=0 清零投票
+
+    def follow_cb(self, msg: Bool):
+        self._follow_active = msg.data
 
     # ═══════════════════════════════════════════════════════════════
     # 锁定状态机
@@ -504,29 +507,13 @@ class DisplayNode(Node):
         cv2.putText(frame, f'TEMP:{temp:.0f}C', (x + 20, row1_y + 8),
                     self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
 
-        # ── 节点计数 (每 5s 后台线程运行, 不阻塞 render) ──
+        # ── 启动计时 (30s 内显示 STARTING) ──
         now = self.get_clock().now().nanoseconds / 1e9
-        if now - self._node_count_ts > 5.0 and not getattr(self, '_node_count_running', False):
-            self._node_count_running = True
-            self._node_count_ts = now
+        if not self._startup_done and now - self._start_ts > 30.0:
+            self._startup_done = True
 
-            def _count_nodes():
-                try:
-                    r = subprocess.run(
-                        'source /opt/tros/humble/setup.bash && ros2 node list 2>/dev/null | wc -l',
-                        shell=True, executable='/bin/bash',
-                        capture_output=True, text=True, timeout=5)
-                    self._node_count = int(r.stdout.strip())
-                except Exception:
-                    pass
-                self._node_count_running = False
-            threading.Thread(target=_count_nodes, daemon=True).start()
-        node_ok = self._node_count >= self._EXPECTED_NODES
-
-        # 第二行: [dot]FPS:60  [dot]Nodes  [dot]DET (每个有独立彩色指示灯)
+        # 第二行: FPS + 跟随状态
         row2_y = 52
-        x = 10
-        # FPS (健康指示灯: >30=绿, 10-30=黄, <10=红, 无数据=灰)
         fps_val = targets.fps if targets is not None else 0
         if fps_val > 30:
             fps_dot = (0, 255, 0)
@@ -537,30 +524,29 @@ class DisplayNode(Node):
         else:
             fps_dot = (100, 100, 100)
         fps_str = f'FPS:{fps_val:.0f}' if fps_val > 0 else 'FPS:--'
-        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, fps_dot, -1)
-        cv2.putText(frame, fps_str, (x + 20, row2_y + 8),
+        cv2.circle(frame, (10 + self._DOT_R, row2_y), self._DOT_R, fps_dot, -1)
+        cv2.putText(frame, fps_str, (30, row2_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # Nodes
+        # 跟随模式指示
         x = 170
-        nc = (0, 255, 0) if node_ok else (0, 255, 255)
-        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, nc, -1)
-        cv2.putText(frame, f'Nodes:{self._node_count}/{self._EXPECTED_NODES}',
-                    (x + 20, row2_y + 8), self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+        if self._follow_active:
+            mode_str = 'MODE:FOLLOW'
+            mode_dot = (0, 255, 0)
+        else:
+            mode_str = 'MODE:MANUAL'
+            mode_dot = (100, 100, 100)
+        cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, mode_dot, -1)
+        cv2.putText(frame, mode_str, (x + 20, row2_y + 8),
+                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # ── 系统自检消息行 (DETECT 上方) ──
-        if not self._startup_done and self._node_count >= self._EXPECTED_NODES:
-            self._startup_done = True
+        # ── 系统自检消息行 ──
         if not self._startup_done:
-            sys_msg = f'SYSTEM STARTING... ({self._node_count}/{self._EXPECTED_NODES} nodes)'
+            sys_msg = 'SYSTEM STARTING...'
             sys_dot = (0, 255, 255)
-        elif self._node_count >= self._EXPECTED_NODES:
+        else:
             sys_msg = 'ALL SYSTEMS GO'
             sys_dot = (0, 255, 0)
-        else:
-            missing = self._EXPECTED_NODES - self._node_count
-            sys_msg = f'WARN: {missing} node(s) missing ({self._node_count}/{self._EXPECTED_NODES})'
-            sys_dot = (0, 255, 255)
         sys_y = h - 46
         cv2.circle(frame, (self._DOT_R + 10, sys_y - 9), self._DOT_R, sys_dot, -1)
         cv2.putText(frame, sys_msg, (30, sys_y),
@@ -568,15 +554,28 @@ class DisplayNode(Node):
 
         # ── DETECT 状态条 (底部, 颜色块+白色文字) ──
         has_body_now = self._has_body(targets)
+        follow_on = self._follow_active
         bar_y = h - 16
         if holding:
             remaining = max(0, self._lost_hold_s - (
                 self.get_clock().now().nanoseconds / 1e9 - self._lost_since))
             status = f'HOLDING #{self._locked_id} {remaining:.1f}s | Palm to release'
             color = (0, 165, 255)
-        elif self._locked_id:
-            status = f'LOCKED #{self._locked_id} | OK to switch, Palm to release'
+        elif self._locked_id and follow_on:
+            status = f'FOLLOW LOCKED #{self._locked_id} | OK=switch Palm=release'
             color = (0, 0, 255)
+        elif self._locked_id:
+            status = f'LOCKED #{self._locked_id} | Follow OFF'
+            color = (100, 100, 100)
+        elif follow_on and has_body_now:
+            body_ids = []
+            seen = set()
+            for t in targets.targets:
+                if t.track_id not in seen and self._find_body_roi(t) is not None:
+                    body_ids.append(str(t.track_id))
+                    seen.add(t.track_id)
+            status = f'FOLLOW [{",".join(body_ids)}] | OK=lock Palm=unlock'
+            color = (0, 255, 255)
         elif has_body_now:
             body_ids = []
             seen = set()
@@ -584,17 +583,17 @@ class DisplayNode(Node):
                 if t.track_id not in seen and self._find_body_roi(t) is not None:
                     body_ids.append(str(t.track_id))
                     seen.add(t.track_id)
-            status = f'DETECT [{",".join(body_ids)}] | OK=lock Palm=unlock'
-            color = (0, 255, 255)
+            status = f'[VOICE MANUAL] DETECT [{",".join(body_ids)}]'
+            color = (100, 100, 100)
         else:
-            status = 'WAITING | OK gesture to lock'
+            status = '[VOICE MANUAL] WAITING'
             color = (100, 100, 100)
         cv2.circle(frame, (self._DOT_R + 10, bar_y - 9), self._DOT_R, color, -1)
         cv2.putText(frame, status, (30, bar_y),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
         cv2.imshow(self._window, frame)
-        cv2.waitKey(1)
+        cv2.waitKey(30)
 
 
 def main():

@@ -67,7 +67,7 @@ constexpr uint8_t  CRC8_INIT           = 0x00;
 constexpr uint8_t  SBUS_CH_STEERING    = 0;     // CH1
 constexpr uint8_t  SBUS_CH_THROTTLE    = 1;     // CH2
 constexpr uint8_t  SBUS_CH_ARM         = 4;     // CH5 (LOW=DISARM, HIGH=ARM)
-constexpr uint8_t  SBUS_CH_MODE        = 5;     // CH6 (LOW=手控RC, HIGH=自动X5)
+constexpr uint8_t  SBUS_CH_MODE        = 5;     // CH6 (LOW=手控RC, HIGH=X5模式 RDK X5决策)
 constexpr uint16_t SBUS_ARM_THRESHOLD  = 1024;  // CH5 > this = ARMED
 constexpr uint16_t SBUS_MODE_THRESHOLD = 1024;  // CH6 > this = 自动模式
 
