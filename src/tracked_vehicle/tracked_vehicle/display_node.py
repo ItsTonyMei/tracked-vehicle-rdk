@@ -3,11 +3,14 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, LaserScan
 from ai_msgs.msg import PerceptionTargets
 from std_msgs.msg import Bool
 import cv2
 import numpy as np
+import math
+
+from .lidar_fusion import FusionEngine
 
 
 class DisplayNode(Node):
@@ -34,6 +37,7 @@ class DisplayNode(Node):
         self._lost_hold_s = self.declare_parameter('lost_hold_s', 5.0).value
         self._empty_reset_s = self.declare_parameter('empty_reset_s', 10.0).value
         self._max_det_age_s = self.declare_parameter('max_det_age_s', 0.5).value
+        self._cam_hfov_deg = self.declare_parameter('cam_hfov_deg', 70.0).value
 
         # ── 帧数据 ──
         self._frame = None
@@ -70,6 +74,11 @@ class DisplayNode(Node):
         self.sub_follow = self.create_subscription(
             Bool, '/follow_active', self.follow_cb, 10)
         self._follow_active = False
+        self.sub_scan = self.create_subscription(
+            LaserScan, '/scan', self.scan_cb, 10)
+        self._scan = None
+        self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
+        self._fused = {}
         self.timer = self.create_timer(0.33, self.render)
         self._start_ts = self.get_clock().now().nanoseconds / 1e9
 
@@ -267,6 +276,9 @@ class DisplayNode(Node):
     def follow_cb(self, msg: Bool):
         self._follow_active = msg.data
 
+    def scan_cb(self, msg: LaserScan):
+        self._scan = msg
+
     # ═══════════════════════════════════════════════════════════════
     # 锁定状态机
     # ═══════════════════════════════════════════════════════════════
@@ -410,6 +422,9 @@ class DisplayNode(Node):
         orig_h, orig_w = frame.shape[:2]
 
         targets = self._targets
+        now = self.get_clock().now().nanoseconds / 1e9
+        self._fused = self._fusion.update(
+            self._scan, self._targets, orig_w, now)
         holding = (self._locked_id is not None and self._lost_since > 0.0)
 
         if targets is not None:
@@ -423,7 +438,12 @@ class DisplayNode(Node):
                 r = body_roi
                 x1, y1 = int(r.x_offset), int(r.y_offset)
                 x2, y2 = x1 + int(r.width), y1 + int(r.height)
-                dist = (self.bbox_ref * self.bbox_ref_dist) / r.width if r.width > 0 else 0
+                # 融合距离: LiDAR EKF → 回退 bbox 宽度估计
+                fd = self._fused.get(t.track_id)
+                if fd is not None:
+                    dist = fd['dist']
+                else:
+                    dist = (self.bbox_ref * self.bbox_ref_dist) / r.width if r.width > 0 else 0
 
                 is_locked = (t.track_id == self._locked_id)
                 if is_locked:
