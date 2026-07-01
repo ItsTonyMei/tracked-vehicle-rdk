@@ -18,8 +18,8 @@ topic 拓扑:
   voice_bridge 发布   /follow_active (Bool, VOICE_MANUAL=False)
 
 协议: AA 55 [STATUS] [CMD_ID] FB
-  STATUS=0x00 识别结果, FF=播报触发
-  来源: 产品级串口协议列表V3 + 实测验证
+  STATUS=0x00 识别结果, 0x01-0x0A=自动播报, FF=播报触发
+  来源: CI1302 出厂固件 命令词播报词协议列表 V3
 """
 
 import rclpy
@@ -39,22 +39,19 @@ class State(enum.IntEnum):
 class VoiceBridge(Node):
 
     # 语音命令 → Twist 速度映射
-    # IDs 0-9 来自实测验证 (可能与出厂 V3 自定义固件对应)
-    # IDs 1-3 来自出厂 V3 标准协议 (0x01/0x02=停止, 0x03=前进)
-    # IDs 27-28 来自出厂 V3 标准协议 (0x1B/0x1C=跟随开关)
+    # 来源: CI1302 出厂固件协议 (AA 55 00 [CMD_ID] FB)
     CMD_MAP = {
-        0:  ('STOP',        (0.0,  0.0,  0.0)),
-        1:  ('STOP',        (0.0,  0.0,  0.0)),   # 出厂 V3: 小车停止
-        2:  ('STOP',        (0.0,  0.0,  0.0)),   # 出厂 V3: 停止
-        3:  ('FORWARD',     (0.5,  0.0,  0.0)),   # 出厂 V3: 小车前进
-        4:  ('FORWARD',     (0.5,  0.0,  0.0)),
-        5:  ('BACKWARD',    (-0.3,  0.0,  0.0)),
-        6:  ('TURN_LEFT',   (0.2,  0.0,  0.4)),
-        7:  ('TURN_RIGHT',  (0.2,  0.0, -0.4)),
-        8:  ('SPIN_LEFT',   (0.0,  0.0,  0.5)),
-        9:  ('SPIN_RIGHT',  (0.0,  0.0, -0.5)),
-        27: ('FOLLOW_ON',   None),
-        28: ('FOLLOW_OFF',  None),
+        1:  ('STOP',        (0.0,  0.0,  0.0)),   # 小车停止
+        2:  ('STOP',        (0.0,  0.0,  0.0)),   # 停止
+        3:  ('FORWARD',     (0.5,  0.0,  0.0)),   # 小车前进
+        4:  ('FORWARD',     (0.5,  0.0,  0.0)),   # 小车前行
+        5:  ('BACKWARD',    (-0.3,  0.0,  0.0)),  # 小车后退
+        6:  ('TURN_LEFT',   (0.2,  0.0,  0.4)),   # 小车左转
+        7:  ('TURN_RIGHT',  (0.2,  0.0, -0.4)),   # 小车右转
+        8:  ('SPIN_LEFT',   (0.0,  0.0,  0.5)),   # 小车左旋
+        9:  ('SPIN_RIGHT',  (0.0,  0.0, -0.5)),   # 小车右旋
+        27: ('FOLLOW_ON',   None),                 # 打开跟随功能
+        28: ('FOLLOW_OFF',  None),                 # 关闭跟随功能
     }
 
     _STOP_VEL = (0.0, 0.0, 0.0)
@@ -155,11 +152,11 @@ class VoiceBridge(Node):
             if not count:
                 return
             data = self._ser.read(count)
-            # 逐帧解析: AA 55 [STATUS] [CMD_ID] FB
-            # 只处理 STATUS=0x00 的识别结果, 忽略唤酾/休眠事件 (0x01/0x02/0x03)
+            # 协议: AA 55 [STATUS] [CMD_ID] FB  (5 bytes)
+            # 只处理 STATUS=0x00 的识别结果, 忽略唤醒/休眠事件
             for i in range(len(data) - 4):
                 if data[i] == 0xAA and data[i+1] == 0x55 and data[i+4] == 0xFB:
-                    if data[i+2] == 0x00:  # 仅处理识别结果帧
+                    if data[i+2] == 0x00:
                         self._on_voice(data[i+3])
         except serial.SerialException:
             pass
