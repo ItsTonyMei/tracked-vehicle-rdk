@@ -88,8 +88,7 @@ class VoiceBridge(Node):
             raise
 
         time.sleep(0.5)
-        self._ser.flushInput()    # 清空上电噪声，再发 init
-        self._write_cmd(0x67)
+        self._ser.flushInput()    # 清空上电噪声
         self.get_logger().info('Voice bridge ready — VOICE_MANUAL mode')
 
         self._timer = self.create_timer(0.1, self._poll)
