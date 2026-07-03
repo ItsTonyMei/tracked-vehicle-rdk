@@ -18,7 +18,7 @@ topic 拓扑:
   voice_bridge 发布   /cmd_vel (唯一发布者)
   voice_bridge 发布   /follow_active (Bool, VOICE_MANUAL=False)
 
-协议: A5 FA 00 [TYPE] [CMD_ID] 00 [CKSUM] FB (8 bytes)
+协议 V01843: A5 FA 00 [TYPE] [CMD_ID] 00 [CKSUM] FB (8 bytes)
   TYPE=0x81 CI1302→Host 识别结果, TYPE=0x82 Host→CI1302 触发播报
   CKSUM = (A5+FA+00+TYPE+CMD+00) & 0xFF
   固件: CI1302_chinese_1mic_V01843, USE_SEPARATE_WAKEUP_EN=1
@@ -40,7 +40,6 @@ class State(enum.IntEnum):
 
 class VoiceBridge(Node):
 
-    # 语音命令 → Twist 速度映射 (CI1302 V01843 固件)
     CMD_MAP = {
         0x06: ('STOP',        (0.0,  0.0,  0.0)),   # 小车停止
         0x07: ('FORWARD',     (0.5,  0.0,  0.0)),   # 小车前进
@@ -53,17 +52,11 @@ class VoiceBridge(Node):
         0x0E: ('FOLLOW_OFF',  None),                 # 关闭跟随
     }
 
-    # 非运动命令 ID (唤醒词/欢迎语/音量等 — 不映射到 /cmd_vel)
-    _NON_MOTION_IDS = {0x01, 0x02, 0x03, 0x04, 0x05}
-
     _STOP_VEL = (0.0, 0.0, 0.0)
-
-    # 帧常量
-    _HEADER = bytes([0xA5, 0xFA, 0x00])
-    _TAIL = 0xFB
+    _FRAME_LEN = 8
     _TYPE_SEND = 0x81   # CI1302 → Host
     _TYPE_RECV = 0x82   # Host → CI1302
-    _FRAME_LEN = 8
+    _TAIL = 0xFB
 
     def __init__(self):
         super().__init__('voice_bridge')
@@ -73,23 +66,16 @@ class VoiceBridge(Node):
         self._action_duration = self.declare_parameter('action_duration_s', 3.0).value
         self._welcome_delay = self.declare_parameter('welcome_delay_s', 3.0).value
 
-        # ── 状态机 ──
         self._state = State.VOICE_MANUAL
         self._last_cmd_ts = 0.0
         self._last_cmd_id = None
         self._body_track_msg = None
 
-        # ── /cmd_vel 唯一发布者 ──
         self._pub = self.create_publisher(Twist, '/cmd_vel', 10)
-
-        # ── /follow_active 状态发布 ──
         self._follow_pub = self.create_publisher(Bool, '/follow_active', 10)
-
-        # ── 订阅 body_tracking ──
         self._sub_bt = self.create_subscription(
             Twist, '/cmd_vel_body_track', self._on_body_track, 10)
 
-        # ── 串口 ──
         try:
             self._ser = serial.Serial(port, baud, timeout=0.1)
             self.get_logger().info(f'Voice module opened: {port} @ {baud}')
@@ -100,17 +86,12 @@ class VoiceBridge(Node):
         time.sleep(0.8)
         self._ser.flushInput()
 
-        # ── 延时触发欢迎语 (等待 X5 系统启动完成) ──
         self._welcome_timer = self.create_timer(self._welcome_delay, self._play_welcome_once)
         self._welcome_played = False
 
         self._timer = self.create_timer(0.1, self._poll)
         self._follow_pub.publish(Bool(data=False))
         self.get_logger().info('Voice bridge ready — VOICE_MANUAL mode')
-
-    # ═════════════════════════════════════════════════════════════
-    # 生命周期
-    # ═════════════════════════════════════════════════════════════
 
     def destroy_node(self):
         self._close_serial()
@@ -121,12 +102,11 @@ class VoiceBridge(Node):
     # ═════════════════════════════════════════════════════════════
 
     def _play_welcome_once(self):
-        """一次性定时器回调: 系统启动完成后播报欢迎语"""
         self._welcome_timer.cancel()
         if self._welcome_played:
             return
         self._welcome_played = True
-        self._write_cmd(0x02)  # 欢迎语: A5 FA 00 82 02 00 23 FB
+        self._write_cmd(0x02)  # A5 FA 00 82 02 00 23 FB
         self.get_logger().info('Welcome triggered — system ready')
 
     # ═════════════════════════════════════════════════════════════
@@ -134,7 +114,6 @@ class VoiceBridge(Node):
     # ═════════════════════════════════════════════════════════════
 
     def _write_cmd(self, cmd_id):
-        """发送 A5 FA 帧到 CI1302 (Host → Module, TYPE=0x82)"""
         cksum = (0xA5 + 0xFA + 0x00 + self._TYPE_RECV + cmd_id + 0x00) & 0xFF
         frame = bytes([0xA5, 0xFA, 0x00, self._TYPE_RECV, cmd_id, 0x00, cksum, self._TAIL])
         try:
@@ -162,7 +141,6 @@ class VoiceBridge(Node):
     def _poll(self):
         now = self.get_clock().now().nanoseconds / 1e9
 
-        # ── 运动命令超时处理 ──
         if self._last_cmd_id is not None and now - self._last_cmd_ts > self._action_duration:
             if self._state == State.FOLLOWING:
                 self.get_logger().info('Voice motion done, resuming follow relay')
@@ -172,18 +150,16 @@ class VoiceBridge(Node):
                 self._publish_vel('AUTO_STOP', self._STOP_VEL)
             self._last_cmd_id = None
 
-        # ── 读取语音模块 ──
         try:
             count = self._ser.in_waiting
             if not count:
                 return
             data = self._ser.read(count)
-            # 协议: A5 FA 00 81 [CMD] 00 [CKSUM] FB (8 bytes)
+
             for i in range(len(data) - self._FRAME_LEN + 1):
                 if (data[i] == 0xA5 and data[i+1] == 0xFA and
                     data[i+2] == 0x00 and data[i+3] == self._TYPE_SEND and
                     data[i+7] == self._TAIL):
-                    # 校验 checksum
                     calc = (data[i] + data[i+1] + data[i+2] +
                             data[i+3] + data[i+4] + data[i+5]) & 0xFF
                     if calc == data[i+6]:
@@ -196,18 +172,13 @@ class VoiceBridge(Node):
     # ═════════════════════════════════════════════════════════════
 
     def _on_voice(self, cmd_id):
-        # 忽略非运动命令 (唤醒词/欢迎语/音量等)
-        if cmd_id in self._NON_MOTION_IDS:
-            return
-
         if cmd_id not in self.CMD_MAP:
-            self.get_logger().info(f'UNMAPPED voice ID={cmd_id} (0x{cmd_id:02X})')
+            self.get_logger().info(f'UNMAPPED voice ID=0x{cmd_id:02X}')
             return
 
         name, vel = self.CMD_MAP[cmd_id]
         now = self.get_clock().now().nanoseconds / 1e9
 
-        # ── 模式切换命令 ──
         if cmd_id == 0x0D:  # FOLLOW_ON
             if self._state != State.FOLLOWING:
                 self._state = State.FOLLOWING
@@ -220,7 +191,6 @@ class VoiceBridge(Node):
             self._exit_following('VOICE: FOLLOW_OFF')
             return
 
-        # ── 停止命令 ──
         if name == 'STOP':
             if self._state == State.FOLLOWING:
                 self._exit_following('VOICE: STOP (exit follow)')
@@ -229,7 +199,6 @@ class VoiceBridge(Node):
                 self._last_cmd_id = None
             return
 
-        # ── 运动命令 ──
         self._publish_vel(name, vel)
         self._last_cmd_ts = now
         self._last_cmd_id = cmd_id
