@@ -45,8 +45,24 @@ class DisplayNode(Node):
         self._last_det_ts = 0.0
 
         # ── 启动状态 ──
-        self._startup_done = False     # 运行 >30s 后置 True
-        self._start_ts = 0.0           # __init__ 结束后设置
+        self._startup_done = False
+        self._start_ts = 0.0
+        self._last_startup_check = 0.0
+        # 期望启动的子系统 (topic, 显示名称)
+        self._SUBSYSTEMS = [
+            ('/image',             'Camera'),
+            ('/hobot_mono2d_body_detection', 'Body Det'),
+            ('/hobot_hand_lmk_detection',    'Hand LMK'),
+            ('/hobot_hand_gesture_detection','Gesture'),
+            ('/cmd_vel_body_track', 'Tracking'),
+            ('/cmd_vel',           'Cmd Vel'),
+            ('/follow_active',     'Voice'),
+            ('/scan',              'LiDAR'),
+        ]
+        self._startup_ok = {}          # name → bool
+        self._startup_order = []       # 就绪顺序
+        self._startup_failed = set()   # 超时未就绪
+        self._startup_timeout_s = 25.0 # 单项超时阈值
 
         # ── 手势投票 ──
         self._gesture_ts = 0.0
@@ -94,6 +110,34 @@ class DisplayNode(Node):
         cv2.moveWindow(self._window, 0, 0)
         cv2.setWindowProperty(self._window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         self.get_logger().info('display_node OK')
+
+    # ═══════════════════════════════════════════════════════════════
+    # 启动进度检测
+    # ═══════════════════════════════════════════════════════════════
+
+    def _check_startup_progress(self):
+        """每 2s 检测各子系统 topic 是否有 publisher, 更新启动进度."""
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now - self._last_startup_check < 2.0:
+            return
+        self._last_startup_check = now
+
+        for topic, name in self._SUBSYSTEMS:
+            if not self._startup_ok.get(name, False):
+                pubs = self.get_publishers_info_by_topic(topic)
+                if pubs:
+                    self._startup_ok[name] = True
+                    self._startup_order.append(name)
+                    self.get_logger().info(
+                        f'Startup [{len(self._startup_order)}/{len(self._SUBSYSTEMS)}]: {name}')
+
+        # 超时检测
+        for topic, name in self._SUBSYSTEMS:
+            if (not self._startup_ok.get(name, False) and
+                now - self._start_ts > self._startup_timeout_s):
+                self._startup_failed.add(name)
+                self._startup_ok[name] = False  # 标记为失败
+                self.get_logger().warn(f'Startup TIMEOUT: {name} ({topic})')
 
     # ═══════════════════════════════════════════════════════════════
     # 空间匹配工具
@@ -529,13 +573,6 @@ class DisplayNode(Node):
         cv2.putText(frame, f'TEMP:{temp:.0f}C', (x + 20, row1_y + 8),
                     self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
 
-        # ── 启动计时 (30s 内显示 STARTING) ──
-        now = self.get_clock().now().nanoseconds / 1e9
-        if not self._startup_done and now - self._start_ts > 30.0:
-            self._startup_done = True
-            self._ready_pub.publish(Bool(data=True))
-            self._ready_sent = True
-
         # 第二行: FPS + 跟随状态
         row2_y = 52
         fps_val = targets.fps if targets is not None else 0
@@ -564,17 +601,55 @@ class DisplayNode(Node):
         cv2.putText(frame, mode_str, (x + 20, row2_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # ── 系统自检消息行 ──
+        # ── 启动进度检测 ──
         if not self._startup_done:
-            sys_msg = 'SYSTEM STARTING...'
-            sys_dot = (0, 255, 255)
+            self._check_startup_progress()
+
+        # ── 系统状态行 (进度条 + 统计 + 异常提示) ──
+        n_ok = len(self._startup_order)
+        n_total = len(self._SUBSYSTEMS)
+        n_fail = len(self._startup_failed)
+        progress = n_ok / n_total if n_total > 0 else 0
+
+        # 进度条 (底部倒数第二行)
+        bar_x, bar_y, bar_w, bar_h = 10, h - 52, 200, 6
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (60, 60, 60), -1)
+        if progress > 0:
+            fill_w = int(bar_w * progress)
+            fill_color = (0, 255, 200) if not self._startup_failed else (0, 200, 255)
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h),
+                          fill_color, -1)
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (100, 100, 100), 1)
+
+        # 统计文字 (进度条右侧)
+        if not self._startup_done:
+            stat_text = f'{n_ok}/{n_total}'
+            if n_fail > 0:
+                stat_text += f' !{n_fail}'
+            cv2.putText(frame, stat_text, (bar_x + bar_w + 8, bar_y + 7),
+                        self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+
+            # 当前启动项 & 就绪列表
+            ready_names = ', '.join(self._startup_order[-3:]) if self._startup_order else '...'
+            cv2.putText(frame, ready_names, (bar_x + bar_w + 60, bar_y + 7),
+                        self._FONT, self._FONT_SCALE, (180, 180, 180), self._FONT_THICK)
         else:
-            sys_msg = 'ALL SYSTEMS GO'
-            sys_dot = (0, 255, 0)
-        sys_y = h - 46
-        cv2.circle(frame, (self._DOT_R + 10, sys_y - 9), self._DOT_R, sys_dot, -1)
-        cv2.putText(frame, sys_msg, (30, sys_y),
-                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+            cv2.putText(frame, 'ALL SYSTEMS GO', (bar_x + bar_w + 8, bar_y + 7),
+                        self._FONT, self._FONT_SCALE, (0, 255, 0), self._FONT_THICK)
+
+        # 异常提示 (进度条下方)
+        if n_fail > 0:
+            failed_names = ', '.join(sorted(self._startup_failed))
+            fail_text = f'TIMEOUT: {failed_names}'
+            fail_y = bar_y + bar_h + 16
+            cv2.putText(frame, fail_text, (bar_x, fail_y),
+                        self._FONT, self._FONT_SCALE, (0, 0, 255), self._FONT_THICK)
+
+        # 系统就绪判定
+        if not self._startup_done and now - self._start_ts > 30.0:
+            self._startup_done = True
+            self._ready_pub.publish(Bool(data=True))
+            self._ready_sent = True
 
         # ── DETECT 状态条 (底部, 颜色块+白色文字) ──
         has_body_now = self._has_body(targets)
