@@ -177,10 +177,14 @@ tracked-vehicle-rdk/
 │   │   ├── __init__.py               #    ✅ 包初始化
 │   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接 (CRC-8/自动重连/可配置转向)
 │   │   ├── display_node.py           #    ✅ HDMI 屏显 + 手势锁定 (系统状态栏/空间重识别)
-│   │   └── voice_bridge.py           #    ✅ AI 语音 → /cmd_vel 桥接 (CI1302/20Hz轮询/3s动作)
+│   │   └── voice_bridge.py           #    ✅ AI 语音 → /cmd_vel 桥接 (CI1302 V01843/A5FA协议/唤醒词DNN级门控/欢迎语触发)
 │   └── scripts/                      # 🔧 工具脚本 (已移除 stereonet 内部处理)
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交) ✅
+├── ci1302_firmware/                   # 🎙️ CI1302 语音模块固件 ✅
+│   ├── 命令词播报词协议列表V3_履带车.xlsx  #    V3 履带车专用协议 (14条)
+│   └── sfw20260703092622158195706/       #    V01843 固件 + 刷机工具
+│
 ├── stm32_firmware/                   # 🔩 STM32 扩展板固件 v3.2 ✅
 │   ├── platformio.ini                #    PlatformIO 构建 (STM32F103RCT6)
 │   ├── flash_stm32.sh                #    ✅ 一键烧录脚本 (stm32flash + bootloader 轮询)

@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-07-03
+
+### Changed
+
+- **voice_bridge 协议升级** — CI1302 固件 V00681 → V01843, AA 55 → A5 FA
+  - 帧格式: `A5 FA 00 81 [CMD] 00 [CKSUM] FB` (8 bytes), 带累加和校验
+  - CMD 映射重新编号: 停止 0x06, 前进 0x07, 后退 0x08, 左转 0x09, 右转 0x0A, 左旋 0x0B, 右旋 0x0C, 跟随开 0x0D, 跟随关 0x0E
+  - 唤醒词 "你好瓦力" (CMD 0x01) 由 DNN 级独立模型门控 (`USE_SEPARATE_WAKEUP_EN=1`)
+- **欢迎语自动播报** — X5 启动完成后延时 3s 触发 CI1302 欢迎语, 与 display "all systems go" 同步
+- **协议表重建** — 移除垃圾分类/机器人演示/颜色识别等 90+ 条无用命令词, 精简为 14 条履带车专用协议
+
+### Added
+
+- `ci1302_firmware/sfw20260703092622158195706/` — V01843 固件 + 协议 readme
+- `ci1302_firmware/命令词播报词协议列表V3_履带车.xlsx` — 新版协议表 (14 条, 含唤醒词配置)
+
+### Removed
+
+- 旧版 `命令词播报词协议列表V3_中文_瓦力.xlsx` (110 条, 含大量演示命令)
+
+### Fixed
+
+- CI1302 开机误播垃圾分类 (0x67 命令冲突, 已在固件层面彻底解决)
+- 语音命令无唤醒词直接生效 (DNN 分离模型 + 唤醒词 gating)
+
 ## [0.5.2] - 2026-06-25
 
 ### Added

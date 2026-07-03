@@ -18,10 +18,15 @@ log/
 *.hex
 
 # Models (large files)
-*.bin
 *.tflite
 *.onnx
 *.hbm
+
+# CI1302 SDK & tools (large, not tracked)
+ci1302_firmware/**/CI13XX_SDK_*/
+ci1302_firmware/**/*.rar
+ci1302_firmware/**/*.pdf
+ci1302_firmware/**/语音芯片固件烧录工具/
 
 # Environment
 .env
