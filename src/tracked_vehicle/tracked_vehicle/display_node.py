@@ -95,7 +95,7 @@ class DisplayNode(Node):
         self._scan = None
         self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
         self._fused = {}
-        self.timer = self.create_timer(0.1, self.render)
+        self.timer = self.create_timer(1.0/60.0, self.render)
         self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
         self._ready_sent = False
         self._start_ts = self.get_clock().now().nanoseconds / 1e9
