@@ -559,7 +559,7 @@ class DisplayNode(Node):
         for label, pct in [('CPU', cpu_pct), ('BPU', bpu_pct), ('MEM', mem_pct)]:
             _draw_dot(x + self._DOT_R, row1_y, pct)
             cv2.putText(frame, f'{label}:{pct:.0f}%', (x + 20, row1_y + 8),
-                        self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
+                        self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
             x += 160
 
         # 温度
@@ -571,7 +571,7 @@ class DisplayNode(Node):
             tc = (0, 255, 0)
         cv2.circle(frame, (x + self._DOT_R, row1_y), self._DOT_R, tc, -1)
         cv2.putText(frame, f'TEMP:{temp:.0f}C', (x + 20, row1_y + 8),
-                    self._FONT, self._FONT_SCALE, (220, 220, 220), self._FONT_THICK)
+                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
         # 第二行: FPS + 跟随状态
         row2_y = 52
