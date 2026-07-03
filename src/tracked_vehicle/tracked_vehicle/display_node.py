@@ -647,17 +647,15 @@ class DisplayNode(Node):
 
         # 4) 数字化统计
         x = bar_x + bar_w + 8
-        stat_text = f'{n_ok}/{n_total}'
-        if n_fail > 0:
-            stat_text += f' !{n_fail}'
-        cv2.putText(frame, stat_text, (x, row_y + 6),
+        cv2.putText(frame, f'{n_ok}/{n_total}', (x, row_y + 6),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+        stat_w = cv2.getTextSize(f'{n_ok}/{n_total}', self._FONT, self._FONT_SCALE, self._FONT_THICK)[0][0]
 
         # 5) 异常报错
         if n_fail > 0:
             failed_names = ', '.join(sorted(self._startup_failed))
             fail_text = f'TIMEOUT: {failed_names}'
-            cv2.putText(frame, fail_text, (x + 50, row_y + 6),
+            cv2.putText(frame, fail_text, (x + stat_w + 10, row_y + 6),
                         self._FONT, self._FONT_SCALE, (0, 0, 255), self._FONT_THICK)
 
         # 系统就绪判定
