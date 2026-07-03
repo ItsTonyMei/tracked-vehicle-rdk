@@ -12,12 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - 帧格式: `A5 FA 00 81 [CMD] 00 [CKSUM] FB` (8 bytes), 带累加和校验
   - CMD 映射重新编号: 停止 0x06, 前进 0x07, 后退 0x08, 左转 0x09, 右转 0x0A, 左旋 0x0B, 右旋 0x0C, 跟随开 0x0D, 跟随关 0x0E
   - 唤醒词 "你好瓦力" (CMD 0x01) 由 DNN 级独立模型门控 (`USE_SEPARATE_WAKEUP_EN=1`)
-- **欢迎语自动播报** — X5 启动完成后延时 3s 触发 CI1302 欢迎语, 与 display "all systems go" 同步
+- **欢迎语自动播报** — display_node 启动完成 (30s) 后通过 `/system_ready` topic 通知 voice_bridge 触发欢迎语, 与屏幕 "ALL SYSTEMS GO" 精确同步
 - **协议表重建** — 移除垃圾分类/机器人演示/颜色识别等 90+ 条无用命令词, 精简为 14 条履带车专用协议
 
 ### Added
 
-- `ci1302_firmware/sfw20260703092622158195706/` — V01843 固件 + 协议 readme
+- **`/system_ready` topic** — display_node 启动完成后发布, voice_bridge 订阅后触发欢迎语 (替代盲等定时器)
+- `ci1302_firmware/sfw20260703134807158195173/` — V01843 v2 固件 (内部RC + 关闭波特率校准)
 - `ci1302_firmware/命令词播报词协议列表V3_履带车.xlsx` — 新版协议表 (14 条, 含唤醒词配置)
 
 ### Removed
@@ -28,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - CI1302 开机误播垃圾分类 (0x67 命令冲突, 已在固件层面彻底解决)
 - 语音命令无唤醒词直接生效 (DNN 分离模型 + 唤醒词 gating)
+- CI1302 串口通信乱码 — 时钟源配置错误 (外部晶振 → 内部RC) + 关闭波特率校准 (踩坑 #26)
 
 ## [0.5.2] - 2026-06-25
 

@@ -187,3 +187,17 @@
   - CI1302 模块 (ASR02M 等) 通常使用内部 RC 振荡器, `USE_EXTERNAL_CRYSTAL_OSC` 必须根据实际硬件设置, 不能照搬 SDK 默认值
   - `UART_BAUDRATE_CALIBRATE` 在时钟源正确时有助于补偿 RC 误差, 但在时钟源配置错误时反而加剧偏差
   - 排查时用原始串口收发测试 (python pyserial), 不要只依赖 ROS2 日志 (log_level=warn 会过滤 INFO 日志)
+
+### 27. 欢迎语触发 — 事件驱动 vs 盲等定时器
+
+- **初始方案**: `welcome_delay_s` 参数控制 voice_bridge 启动后延时 N 秒触发欢迎语
+- **问题**: 欢迎语总是比屏幕 "ALL SYSTEMS GO" 早几秒或晚几秒:
+  - display_node 用硬编码 30s 判断系统就绪 (`_startup_done`)
+  - voice_bridge 用独立定时器, 两者无协调机制
+  - 调整 `welcome_delay_s` 只能在特定启动速度下对齐, 冷启动/热启动时间不同时必然错位
+- **正确方案**: display_node 在 `_startup_done` 时 publish `/system_ready` (Bool), voice_bridge 订阅该 topic, 收到后立即触发欢迎语
+- **效果**: 欢迎语与 "ALL SYSTEMS GO" 精确同步 (<1s 偏差)
+- **教训**:
+  - 多个节点之间的时序协调应使用 **topic 事件驱动**, 不要各自维护独立定时器
+  - 独立定时器在系统启动时间波动时必然错位, 事件驱动天然自适应
+  - 发布-订阅模式是 ROS2 中最简单有效的跨节点同步机制

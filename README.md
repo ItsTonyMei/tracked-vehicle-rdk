@@ -177,7 +177,7 @@ tracked-vehicle-rdk/
 │   │   ├── __init__.py               #    ✅ 包初始化
 │   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接 (CRC-8/自动重连/可配置转向)
 │   │   ├── display_node.py           #    ✅ HDMI 屏显 + 手势锁定 (系统状态栏/空间重识别)
-│   │   └── voice_bridge.py           #    ✅ AI 语音 → /cmd_vel 桥接 (CI1302 V01843/A5FA协议/唤醒词DNN级门控/欢迎语触发)
+│   │   └── voice_bridge.py           #    ✅ AI 语音 → /cmd_vel 桥接 (CI1302 V01843/A5FA协议/唤醒词DNN级门控//system_ready事件驱动欢迎语)
 │   └── scripts/                      # 🔧 工具脚本 (已移除 stereonet 内部处理)
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交) ✅
