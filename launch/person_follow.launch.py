@@ -104,7 +104,8 @@ def generate_launch_description():
         name='voice_bridge', output='screen',
         parameters=[{'voice_port': '/dev/voice_module',
                      'voice_baud': 115200,
-                     'action_duration_s': 3.0}])
+                     'action_duration_s': 3.0,
+                     'welcome_delay_s': 10.0}])
 
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='warn',

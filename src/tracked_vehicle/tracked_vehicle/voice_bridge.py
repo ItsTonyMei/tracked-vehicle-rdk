@@ -64,7 +64,7 @@ class VoiceBridge(Node):
         port = self.declare_parameter('voice_port', '/dev/voice_module').value
         baud = self.declare_parameter('voice_baud', 115200).value
         self._action_duration = self.declare_parameter('action_duration_s', 3.0).value
-        self._welcome_delay = self.declare_parameter('welcome_delay_s', 3.0).value
+        self._welcome_delay = self.declare_parameter('welcome_delay_s', 10.0).value
 
         self._state = State.VOICE_MANUAL
         self._last_cmd_ts = 0.0
