@@ -13,6 +13,7 @@
   8. cmd_vel_bridge (/cmd_vel → MotorCmd → STM32)
   9. display_node (HDMI屏显)
  10. voice_bridge (CI1302 语音 → /cmd_vel 唯一发布者 + 状态机)
+ 11. ydlidar_ros2_driver (T-mini Plus 激光雷达)
 
 控制层级: RC CH5 ARM → RC CH6 X5模式 → 语音手动(VOICE_MANUAL) → 跟随(FOLLOWING) → 手势锁定
 用法: ros2 launch tracked_vehicle person_follow.launch.py
@@ -106,8 +107,13 @@ def generate_launch_description():
                      'voice_baud': 115200,
                      'action_duration_s': 3.0}])
 
+    # ── 11. LiDAR ──────────────────────────────────────
+    lidar = IncludeLaunchDescription(PythonLaunchDescriptionSource([
+        '/home/sunrise/ydlidar_ws/install/ydlidar_ros2_driver/share/'
+        'ydlidar_ros2_driver/launch/ydlidar_launch.py']))
+
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='warn',
                               description='ROS2 log level: debug, info, warn, error, fatal'),
-        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, display, voice,
+        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, display, voice, lidar,
     ])
