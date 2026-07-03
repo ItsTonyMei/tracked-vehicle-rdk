@@ -605,44 +605,59 @@ class DisplayNode(Node):
         if not self._startup_done:
             self._check_startup_progress()
 
-        # ── 系统状态行 (进度条 + 统计 + 异常提示) ──
+        # ── 系统状态行: 🔵 状态  [====] 7/8  TIMEOUT: xxx ──
         n_ok = len(self._startup_order)
         n_total = len(self._SUBSYSTEMS)
         n_fail = len(self._startup_failed)
         progress = n_ok / n_total if n_total > 0 else 0
+        row_y = h - 52
 
-        # 进度条 (底部倒数第二行)
-        bar_x, bar_y, bar_w, bar_h = 10, h - 52, 200, 6
-        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (60, 60, 60), -1)
+        # 1) 颜色块
+        if self._startup_done:
+            dot_color = (0, 255, 0)
+        elif n_fail > 0:
+            dot_color = (0, 0, 255)
+        else:
+            dot_color = (0, 255, 255)
+        cv2.circle(frame, (10 + self._DOT_R, row_y - 2), self._DOT_R, dot_color, -1)
+
+        # 2) 状态文字
+        if self._startup_done:
+            status_text = 'ALL SYSTEMS GO'
+            status_color = (0, 255, 0)
+        else:
+            status_text = 'STARTING'
+            status_color = (255, 255, 255)
+        status_x = 30
+        cv2.putText(frame, status_text, (status_x, row_y + 6),
+                    self._FONT, self._FONT_SCALE, status_color, self._FONT_THICK)
+        status_w = cv2.getTextSize(status_text, self._FONT, self._FONT_SCALE, self._FONT_THICK)[0][0]
+
+        # 3) 进度条
+        bar_x = status_x + status_w + 12
+        bar_w, bar_h = 160, 8
+        bar_y = row_y - 2
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (50, 50, 50), -1)
         if progress > 0:
             fill_w = int(bar_w * progress)
-            fill_color = (0, 255, 200) if not self._startup_failed else (0, 200, 255)
+            fill_color = (0, 255, 200) if n_fail == 0 else (0, 200, 255)
             cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h),
                           fill_color, -1)
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (100, 100, 100), 1)
 
-        # 统计文字 (进度条右侧)
-        if not self._startup_done:
-            stat_text = f'{n_ok}/{n_total}'
-            if n_fail > 0:
-                stat_text += f' !{n_fail}'
-            cv2.putText(frame, stat_text, (bar_x + bar_w + 8, bar_y + 7),
-                        self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+        # 4) 数字化统计
+        x = bar_x + bar_w + 8
+        stat_text = f'{n_ok}/{n_total}'
+        if n_fail > 0:
+            stat_text += f' !{n_fail}'
+        cv2.putText(frame, stat_text, (x, row_y + 6),
+                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-            # 当前启动项 & 就绪列表
-            ready_names = ', '.join(self._startup_order[-3:]) if self._startup_order else '...'
-            cv2.putText(frame, ready_names, (bar_x + bar_w + 60, bar_y + 7),
-                        self._FONT, self._FONT_SCALE, (180, 180, 180), self._FONT_THICK)
-        else:
-            cv2.putText(frame, 'ALL SYSTEMS GO', (bar_x + bar_w + 8, bar_y + 7),
-                        self._FONT, self._FONT_SCALE, (0, 255, 0), self._FONT_THICK)
-
-        # 异常提示 (进度条下方)
+        # 5) 异常报错
         if n_fail > 0:
             failed_names = ', '.join(sorted(self._startup_failed))
             fail_text = f'TIMEOUT: {failed_names}'
-            fail_y = bar_y + bar_h + 16
-            cv2.putText(frame, fail_text, (bar_x, fail_y),
+            cv2.putText(frame, fail_text, (x + 50, row_y + 6),
                         self._FONT, self._FONT_SCALE, (0, 0, 255), self._FONT_THICK)
 
         # 系统就绪判定
