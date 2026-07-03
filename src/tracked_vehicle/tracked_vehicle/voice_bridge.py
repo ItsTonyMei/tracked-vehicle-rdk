@@ -6,7 +6,7 @@ voice_bridge — CI1302 语音识别 → /cmd_vel 仲裁节点
   1. 解析 CI1302 UART 语音识别结果 (A5 FA 00 81 [CMD] 00 [CKSUM] FB @ 115200)
   2. 状态机仲裁: VOICE_MANUAL (默认) / FOLLOWING (中继 body_tracking)
   3. 作为 /cmd_vel 唯一发布者，消除多写冲突
-  4. 上电启动后触发欢迎语播报，提示用户系统就绪
+  4. 收到 /system_ready 信号后触发欢迎语播报 (与 display "ALL SYSTEMS GO" 同步)
 
 状态机:
   VOICE_MANUAL → 语音运动命令直接发布 /cmd_vel，3s 超时自动 STOP
@@ -64,7 +64,6 @@ class VoiceBridge(Node):
         port = self.declare_parameter('voice_port', '/dev/voice_module').value
         baud = self.declare_parameter('voice_baud', 115200).value
         self._action_duration = self.declare_parameter('action_duration_s', 3.0).value
-        self._welcome_delay = self.declare_parameter('welcome_delay_s', 10.0).value
 
         self._state = State.VOICE_MANUAL
         self._last_cmd_ts = 0.0
@@ -75,6 +74,9 @@ class VoiceBridge(Node):
         self._follow_pub = self.create_publisher(Bool, '/follow_active', 10)
         self._sub_bt = self.create_subscription(
             Twist, '/cmd_vel_body_track', self._on_body_track, 10)
+        # 订阅系统就绪信号 (display_node 启动完成后发布)
+        self._sub_ready = self.create_subscription(
+            Bool, '/system_ready', self._on_system_ready, 10)
 
         try:
             self._ser = serial.Serial(port, baud, timeout=0.1)
@@ -86,7 +88,6 @@ class VoiceBridge(Node):
         time.sleep(0.8)
         self._ser.flushInput()
 
-        self._welcome_timer = self.create_timer(self._welcome_delay, self._play_welcome_once)
         self._welcome_played = False
 
         self._timer = self.create_timer(0.1, self._poll)
@@ -101,13 +102,12 @@ class VoiceBridge(Node):
     # 欢迎语
     # ═════════════════════════════════════════════════════════════
 
-    def _play_welcome_once(self):
-        self._welcome_timer.cancel()
+    def _on_system_ready(self, msg: Bool):
         if self._welcome_played:
             return
         self._welcome_played = True
         self._write_cmd(0x02)  # A5 FA 00 82 02 00 23 FB
-        self.get_logger().info('Welcome triggered — system ready')
+        self.get_logger().info('Welcome triggered — ALL SYSTEMS GO')
 
     # ═════════════════════════════════════════════════════════════
     # 串口

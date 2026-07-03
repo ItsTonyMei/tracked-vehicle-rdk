@@ -80,6 +80,8 @@ class DisplayNode(Node):
         self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
         self._fused = {}
         self.timer = self.create_timer(0.33, self.render)
+        self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
+        self._ready_sent = False
         self._start_ts = self.get_clock().now().nanoseconds / 1e9
 
     # ═══════════════════════════════════════════════════════════════
@@ -531,6 +533,8 @@ class DisplayNode(Node):
         now = self.get_clock().now().nanoseconds / 1e9
         if not self._startup_done and now - self._start_ts > 30.0:
             self._startup_done = True
+            self._ready_pub.publish(Bool(data=True))
+            self._ready_sent = True
 
         # 第二行: FPS + 跟随状态
         row2_y = 52
