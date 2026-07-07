@@ -25,8 +25,9 @@ log/
 # CI1302 SDK & tools (large, not tracked)
 ci1302_firmware/**/CI13XX_SDK_*/
 ci1302_firmware/**/*.rar
-ci1302_firmware/**/*.pdf
 ci1302_firmware/**/语音芯片固件烧录工具/
+# exception: keep the custom-protocol PDF
+!ci1302_firmware/**/3.自定义协议词条制作.pdf
 
 # Environment
 .env

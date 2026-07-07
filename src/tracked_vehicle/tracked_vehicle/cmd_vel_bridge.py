@@ -55,17 +55,18 @@ class CmdVelBridge(Node):
         # 订阅 /cmd_vel
         self.sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_cb, 10)
 
-        # 命令超时: 60s 无新命令 → 发停止帧, 每 5s 检查一次 (避免空转)
+        # 命令超时: 无新命令 → 发停止帧, 定时检查周期 = min(5s, timeout/10)
         self.timeout = self.declare_parameter('cmd_timeout_s', 60.0).value
         self.last_cmd_time = self.get_clock().now()
         self.timer = self.create_timer(min(5.0, self.timeout / 10.0), self.watchdog)
 
-    def __del__(self):
+    def destroy_node(self):
         if getattr(self, '_ser_open', False):
             try:
                 self.ser.close()
             except Exception:
                 pass
+        super().destroy_node()
 
     def cmd_cb(self, msg: Twist):
         self.last_cmd_time = self.get_clock().now()
@@ -110,5 +111,9 @@ class CmdVelBridge(Node):
 
 def main():
     rclpy.init()
-    rclpy.spin(CmdVelBridge())
-    rclpy.shutdown()
+    node = CmdVelBridge()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()

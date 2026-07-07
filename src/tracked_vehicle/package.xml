@@ -12,9 +12,12 @@
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
   <depend>ai_msgs</depend>
   <depend>hbm_img_msgs</depend>
   <depend>python3-serial</depend>
+  <depend>python3-opencv</depend>
+  <depend>python3-numpy</depend>
 
   <exec_depend>hobot_shm</exec_depend>
   <exec_depend>mipi_cam</exec_depend>

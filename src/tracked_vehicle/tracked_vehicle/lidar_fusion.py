@@ -5,7 +5,7 @@ LiDAR-Camera 融合引擎 — 聚类 + 数据关联 + EKF 状态估计
 管线:
   /scan (430pts, 10Hz) → Euclidean 聚类 → LiDAR 目标
   camera bboxes         → 角度投影      → Camera 目标
-  ── Hungarian 匹配 ──→ EKF 更新/预测 ──→ 融合距离 + 速度
+  ── 贪心匹配 ──→ EKF 更新/预测 ──→ 融合距离 + 速度
 
 用法:
   engine = FusionEngine()
@@ -24,16 +24,19 @@ from collections import OrderedDict
 # ═══════════════════════════════════════════════════════════════
 
 class LidarClusterer:
-    """极坐标 → 笛卡尔 → 距离聚类 (DBSCAN 简化变体)。"""
+    """极坐标 → 笛卡尔 → 单链连通性聚类 (距离阈值)."""
 
     def __init__(self, dist_thresh=0.20, min_points=3):
         self.dist_thresh = dist_thresh   # 相邻两点聚类阈值 (m)
         self.min_points = min_points      # 最小点数
 
     def cluster(self, ranges, angle_min, angle_inc):
-        """返回: [{angle_mid, dist_mean, dist_min, points, angle_span}]"""
+        """返回: [{angle_mid, dist_mean, dist_min, points, angle_span}]
+        NaN/Inf 值视为无效点，跳过不参与聚类。"""
         pts_cart = []
         for i, r in enumerate(ranges):
+            if not (r > 0.05 and math.isfinite(r)):
+                continue
             a = angle_min + i * angle_inc
             pts_cart.append((a, r, math.cos(a) * r, math.sin(a) * r))
 
@@ -72,8 +75,8 @@ class LidarClusterer:
 # 匈牙利数据关联
 # ═══════════════════════════════════════════════════════════════
 
-def _hungarian(cost_matrix):
-    """穷举匈牙利分配 (n ≤ 10, 无需 scipy)。返回 [(cam_idx, lid_idx), ...]."""
+def _greedy_match(cost_matrix):
+    """贪心分配 (n ≤ 10, 无需 scipy)。返回 [(cam_idx, lid_idx), ...]."""
     n_cam, n_lid = cost_matrix.shape
     if n_cam == 0 or n_lid == 0:
         return []
@@ -115,7 +118,7 @@ def match_camera_to_lidar(cam_targets, lidar_clusters):
             overlap = max(0, min(ca + cs/2, la + ls/2) - max(ca - cs/2, la - ls/2))
             span_penalty = 1.0 - overlap / max(cs, ls, 1)
             cost[i, j] = angle_diff / 90.0 + span_penalty
-    return _hungarian(cost)
+    return _greedy_match(cost)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -171,6 +174,13 @@ class TargetEKF:
 # 融合引擎
 # ═══════════════════════════════════════════════════════════════
 
+def _find_body_roi(target):
+    for roi in target.rois:
+        if roi.type == 'body':
+            return roi.rect
+    return None
+
+
 class FusionEngine:
     """顶层融合管线: cluster → match → EKF predict → EKF update → prune stale."""
 
@@ -208,7 +218,7 @@ class FusionEngine:
         cam_list = []
         if camera_targets is not None:
             for t in camera_targets.targets:
-                body_roi = self._find_body_roi(t)
+                body_roi = _find_body_roi(t)
                 if body_roi is None:
                     continue
                 r = body_roi
@@ -228,7 +238,7 @@ class FusionEngine:
 
         # ── 3. 数据关联 ──
         pairs = match_camera_to_lidar(cam_list, clusters)
-        matched_cams = set(c for c, _ in pairs)
+        matched_cams = set(cam_list[c]['track_id'] for c, _ in pairs)
         matched_lids = set(l for _, l in pairs)
 
         # ── 4. EKF 预测全部已有 track ──
@@ -308,11 +318,4 @@ class FusionEngine:
         if track_id in self._tracks:
             s = self._tracks[track_id].state
             return math.hypot(s['x'], s['y'])
-        return None
-
-    @staticmethod
-    def _find_body_roi(target):
-        for roi in target.rois:
-            if roi.type == 'body':
-                return roi.rect
         return None

@@ -11,7 +11,7 @@
 | 2 | `throttle_hi` | 油门高字节 |
 | 3 | `steering_lo` | 转向低字节 (uint16 LE) |
 | 4 | `steering_hi` | 转向高字节 |
-| 5 | `CRC8` | 1-4 字节的 CRC-8-MAXIM |
+| 5 | `CRC8` | 1-4 字节的 CRC-8/ITU |
 
 - **CRC8**: poly=0x07, init=0x00, 与 ESP32/ESP8266/原项目一致
 - **发送间隔**: 跟随 /cmd_vel topic 发布频率（body_tracking 约 30Hz）

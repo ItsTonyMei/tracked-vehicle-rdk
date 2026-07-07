@@ -91,17 +91,17 @@ RDK X5 自主指令 (UART)    ▸  遥控器断开时生效
 ├────────┼───────────────┼────────────┼────────────┼─────────┤
 │        ▼               ▼            ▼            ▼         │
 │                     🧠 决策层 (Decision)                     │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│   │YOLO检测  │  │深度采点  │  │雷达融合  │  │语音解析  │  │
-│   │person    │  │stereonet │  │lidar     │  │voice     │  │
-│   │_detector │  │_depth    │  │_fusion   │  │_commander│  │
-│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  │
-│        │ bbox + dist   │           │ obstacle   │ action  │
-│        └───────┬───────┘           │            │         │
-│                ▼                   │            │         │
-│         ┌──────────────┐           │            │         │
-│         │ follow_logic │◄──────────┘            │         │
-│         │ distScore 算法│◄───────────────────────┘         │
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐                 │
+│   │YOLO检测  │  │雷达融合  │  │语音解析  │                 │
+│   │person    │  │lidar     │  │voice     │                 │
+│   │_detector │  │_fusion   │  │_bridge   │                 │
+│   └────┬─────┘  └────┬─────┘  └────┬─────┘                 │
+│        │ bbox + dist   │ obstacle   │ action               │
+│        └───────┬───────┘           │                      │
+│                ▼                   │                      │
+│         ┌──────────────┐           │                      │
+│         │ follow_logic │◄──────────┘                      │
+│         │ /cmd_vel 仲裁 │◄─────────────────────────────────┘
 │         └──────┬───────┘                                   │
 │                │ /cmd_vel                                  │
 ├────────────────┼───────────────────────────────────────────┤
@@ -165,7 +165,7 @@ tracked-vehicle-rdk/
 │   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接 (CRC-8/自动重连/可配置转向)
 │   │   ├── display_node.py           #    ✅ HDMI 屏显 + 手势锁定 (系统状态栏/空间重识别)
 │   │   ├── lidar_fusion.py           #    ✅ LiDAR-Camera 融合引擎 (聚类+匈牙利匹配+EKF)
-│   │   └── voice_bridge.py           #    ✅ AI 语音 → /cmd_vel 桥接 (CI1302 V01843/A5FA协议/唤醒词DNN级门控//system_ready事件驱动欢迎语)
+│   │   └── voice_bridge.py           #    ✅ AI 语音 → /cmd_vel 桥接 (CI1302 V01843/A5FA协议/唤醒词DNN级门控/system_ready事件驱动欢迎语)
 │   └── scripts/                      # 🔧 工具脚本 (已移除 stereonet 内部处理)
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交) ✅
@@ -348,7 +348,7 @@ ros2 launch tracked_vehicle motor_bridge.launch.py
   - [x] 手势唤醒 (OK=锁定, Palm=解除)
   - [x] HDMI 本地屏显 (1024×600 全屏)
   - [x] systemd 开机自启
-- [ ] M6：传感器逐一接入（激光雷达、语音、后视）
+- [ ] M6：后视摄像头接入 (LiDAR + 语音已完成)
 - [ ] M7：全系统联调与安全验收
 - [ ] M8：场地实车测试
 

@@ -12,7 +12,7 @@ Closes #
 - [ ] 新增/修改的代码已写注释
 - [ ] 已在 RDK X5 实机上验证
 - [ ] `colcon build` 通过
-- [ ] 相关测试已通过：`python3 -m pytest tests/`
+- [ ] 已在 RDK X5 板端验证
 - [ ] 文档已同步更新（如涉及）
 
 ## 🧪 如何测试

@@ -57,7 +57,7 @@ constexpr int      DIR_THRESHOLD       = 20;     // 方向判定阈值 (μs)
 constexpr uint8_t  MOTORCMD_HEADER     = 0xAA;
 constexpr uint8_t  MOTORCMD_FRAME_LEN  = 6;
 
-// ─── CRC8 (poly 0x07, init 0x00) ───
+// ─── CRC8: 供 crc8() 使用 (main.cpp) ───
 constexpr uint8_t  CRC8_POLY           = 0x07;
 constexpr uint8_t  CRC8_INIT           = 0x00;
 

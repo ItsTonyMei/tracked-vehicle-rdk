@@ -54,8 +54,8 @@ class VoiceBridge(Node):
 
     _STOP_VEL = (0.0, 0.0, 0.0)
     _FRAME_LEN = 8
-    _TYPE_SEND = 0x81   # CI1302 → Host
-    _TYPE_RECV = 0x82   # Host → CI1302
+    _TYPE_FROM_CI1302 = 0x81   # CI1302 → Host (识别结果)
+    _TYPE_TO_CI1302   = 0x82   # Host → CI1302 (触发播报)
     _TAIL = 0xFB
 
     def __init__(self):
@@ -114,16 +114,26 @@ class VoiceBridge(Node):
     # ═════════════════════════════════════════════════════════════
 
     def _write_cmd(self, cmd_id):
-        cksum = (0xA5 + 0xFA + 0x00 + self._TYPE_RECV + cmd_id + 0x00) & 0xFF
-        frame = bytes([0xA5, 0xFA, 0x00, self._TYPE_RECV, cmd_id, 0x00, cksum, self._TAIL])
+        cksum = (0xA5 + 0xFA + 0x00 + self._TYPE_TO_CI1302 + cmd_id + 0x00) & 0xFF
+        frame = bytes([0xA5, 0xFA, 0x00, self._TYPE_TO_CI1302, cmd_id, 0x00, cksum, self._TAIL])
         try:
             self._ser.write(frame)
         except serial.SerialException:
-            pass
+            self._try_serial_reconnect()
 
     def _close_serial(self):
         if hasattr(self, '_ser') and self._ser.is_open:
             self._ser.close()
+
+    def _try_serial_reconnect(self):
+        try:
+            if self._ser.is_open:
+                self._ser.close()
+            self._ser.open()
+            self._ser.flushInput()
+            self.get_logger().warn('Voice serial reconnected')
+        except serial.SerialException as e:
+            self.get_logger().warn(f'Voice serial reconnect failed: {e}')
 
     # ═════════════════════════════════════════════════════════════
     # body_tracking 中继
@@ -158,14 +168,14 @@ class VoiceBridge(Node):
 
             for i in range(len(data) - self._FRAME_LEN + 1):
                 if (data[i] == 0xA5 and data[i+1] == 0xFA and
-                    data[i+2] == 0x00 and data[i+3] == self._TYPE_SEND and
+                    data[i+2] == 0x00 and data[i+3] == self._TYPE_FROM_CI1302 and
                     data[i+7] == self._TAIL):
                     calc = (data[i] + data[i+1] + data[i+2] +
                             data[i+3] + data[i+4] + data[i+5]) & 0xFF
                     if calc == data[i+6]:
                         self._on_voice(data[i+4])
         except serial.SerialException:
-            pass
+            self._try_serial_reconnect()
 
     # ═════════════════════════════════════════════════════════════
     # 语音命令分发

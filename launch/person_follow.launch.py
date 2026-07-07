@@ -109,8 +109,8 @@ def generate_launch_description():
 
     # ── 11. LiDAR ──────────────────────────────────────
     lidar = IncludeLaunchDescription(PythonLaunchDescriptionSource([
-        '/home/sunrise/ydlidar_ws/install/ydlidar_ros2_driver/share/'
-        'ydlidar_ros2_driver/launch/ydlidar_launch.py']))
+        get_package_share_directory('ydlidar_ros2_driver'),
+        '/launch/ydlidar_launch.py']))
 
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='warn',

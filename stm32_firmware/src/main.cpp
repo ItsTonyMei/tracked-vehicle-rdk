@@ -30,7 +30,7 @@
 #include "config.h"
 
 // SPI2 for IMU (PB12-PB15 on STM32F103RCT6)
-static SPIClass SPI_IMU(PB15, PB14, PB13, PB12);  // MOSI,MISO,SCK,NSS
+static SPIClass SPI_IMU(PIN_IMU_MOSI, PIN_IMU_MISO, PIN_IMU_SCLK, PIN_IMU_NSS);
 
 // ═══════════════════════════════════════════════════════════════
 // 全局状态
@@ -69,11 +69,11 @@ static struct {
 // ═══════════════════════════════════════════════════════════════
 
 static uint8_t crc8(const uint8_t *data, size_t len) {
-    uint8_t crc = 0;
+    uint8_t crc = CRC8_INIT;
     while (len--) {
         crc ^= *data++;
         for (uint8_t i = 0; i < 8; i++)
-            crc = (crc & 0x80) ? (crc << 1) ^ 0x07 : crc << 1;
+            crc = (crc & 0x80) ? (crc << 1) ^ CRC8_POLY : crc << 1;
     }
     return crc;
 }
@@ -178,7 +178,7 @@ static void sbusInit() {
     // RM0008: M and PCE bits must be changed only when UE=0
     USART2->CR1 &= ~USART_CR1_UE;
     USART2->CR1 |= USART_CR1_M | USART_CR1_PCE;
-    USART2->CR2 |= USART_CR2_STOP_0 | USART_CR2_STOP_1;
+    USART2->CR2 |= USART_CR2_STOP_1;  // 2 stop bits (SBUS 8E2)
     USART2->CR1 |= USART_CR1_UE;
     Serial.println("[SBUS] USART2 PA3 @ 100k 8E2 (WFLY)");
 }
@@ -382,10 +382,12 @@ void setup() {
     g_lastCmdMs  = millis();
     escSet(PWM_NEUTRAL, PWM_NEUTRAL);
 
-    // IWDG: ~4s timeout, prescaler 128 → 40kHz/128 = 312.5 Hz, reload = 1250 → 4.0s
+    // IWDG: ~4s timeout. LSI oscillator varies 30-50kHz over temp/voltage,
+    // so actual timeout ranges ~3.2-5.3s. IWDG started late in setup();
+    // code before this point (ESC init, sensor init) is NOT watchdog-protected.
     IWDG->KR = 0x5555;   // unlock
-    IWDG->PR = 5;        // prescaler 128
-    IWDG->RLR = 1249;    // timeout ≈ (1249+1)/312.5 = 4.0s
+    IWDG->PR = 5;        // prescaler 128 → 40kHz/128 = 312.5 Hz
+    IWDG->RLR = 1249;    // timeout = (1249+1)/312.5 = 4.0s
     IWDG->KR = 0xCCCC;   // start
 
     Serial.println("READY. 3s ESC自检后, CH5 ARM 或 X5发指令.\n");
@@ -424,7 +426,9 @@ void loop() {
     }
     if (g_sbus.valid && !sbusWasValid) {
         sbusWasValid = true;
-        Serial.println("[SBUS] 信号恢复 (需重新 ARM)");
+        if (millis() > 5000) {  // skip misleading message at boot
+            Serial.println("[SBUS] 信号恢复 (需重新 ARM)");
+        }
     }
 
     // 3. X5 MotorCmd
@@ -557,6 +561,9 @@ void loop() {
         else if (x5Ok)                                 state = "X5    ";
         else                                           state = "--------";
 
+        // Status output (~7ms @115200) blocks main loop; SBUS USART2 has
+        // only 1-byte HW buffer so some SBUS frames will be lost here.
+        // Acceptable: 5-frame debounce + self-sync recovers within 100ms.
         Serial.print(state);
         Serial.print(" thr="); Serial.print(g_throttle);
         Serial.print(" st="); Serial.print(g_steering);

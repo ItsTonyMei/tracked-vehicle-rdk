@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import math
 
-from .lidar_fusion import FusionEngine
+from .lidar_fusion import FusionEngine, _find_body_roi
 
 
 class DisplayNode(Node):
@@ -97,7 +97,6 @@ class DisplayNode(Node):
         self._fused = {}
         self.timer = self.create_timer(1.0/60.0, self.render)
         self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
-        self._ready_sent = False
         self._start_ts = self.get_clock().now().nanoseconds / 1e9
 
     # ═══════════════════════════════════════════════════════════════
@@ -144,16 +143,22 @@ class DisplayNode(Node):
     # ═══════════════════════════════════════════════════════════════
 
     @staticmethod
-    def _find_body_roi(target):
-        for roi in target.rois:
-            if roi.type == 'body':
-                return roi.rect
-        return None
-
-    @staticmethod
     def _point_in_rect(px, py, rect):
         return (rect.x_offset <= px <= rect.x_offset + rect.width
                 and rect.y_offset <= py <= rect.y_offset + rect.height)
+
+    @staticmethod
+    def _collect_body_ids(targets):
+        """返回所有有 body ROI 的 track_id 字符串列表 (去重)."""
+        if targets is None:
+            return []
+        ids = []
+        seen = set()
+        for t in targets.targets:
+            if t.track_id not in seen and _find_body_roi(t) is not None:
+                ids.append(str(t.track_id))
+                seen.add(t.track_id)
+        return ids
 
     def _match_gesture_to_person(self, gesture_msg):
         """手势-人体空间匹配: 返回做 OK 手势的 body track_id, 或 None."""
@@ -165,7 +170,7 @@ class DisplayNode(Node):
         for bt in self._targets.targets:
             if bt.type != 'person':
                 continue
-            r = self._find_body_roi(bt)
+            r = _find_body_roi(bt)
             if r is not None:
                 body_map[bt.track_id] = r
         if not body_map:
@@ -477,7 +482,7 @@ class DisplayNode(Node):
             for t in targets.targets:
                 if t.type != 'person':
                     continue
-                body_roi = self._find_body_roi(t)
+                body_roi = _find_body_roi(t)
                 if body_roi is None:
                     continue
 
@@ -623,8 +628,12 @@ class DisplayNode(Node):
 
         # 2) 状态文字
         if self._startup_done:
-            status_text = 'ALL SYSTEMS GO'
-            status_color = (0, 255, 0)
+            if n_fail > 0:
+                status_text = f'SYS OK ({n_fail} fail)'
+                status_color = (0, 255, 255)
+            else:
+                status_text = 'ALL SYSTEMS GO'
+                status_color = (0, 255, 0)
         else:
             status_text = 'STARTING'
             status_color = (255, 255, 255)
@@ -662,7 +671,9 @@ class DisplayNode(Node):
         if not self._startup_done and now - self._start_ts > 30.0:
             self._startup_done = True
             self._ready_pub.publish(Bool(data=True))
-            self._ready_sent = True
+            if n_fail > 0:
+                failed_names = ', '.join(sorted(self._startup_failed))
+                self.get_logger().warn(f'STARTUP DONE with {n_fail} timeout(s): {failed_names}')
 
         # ── DETECT 状态条 (底部, 颜色块+白色文字) ──
         has_body_now = self._has_body(targets)
@@ -680,22 +691,10 @@ class DisplayNode(Node):
             status = f'LOCKED #{self._locked_id} | Follow OFF'
             color = (100, 100, 100)
         elif follow_on and has_body_now:
-            body_ids = []
-            seen = set()
-            for t in targets.targets:
-                if t.track_id not in seen and self._find_body_roi(t) is not None:
-                    body_ids.append(str(t.track_id))
-                    seen.add(t.track_id)
-            status = f'FOLLOW [{",".join(body_ids)}] | OK=lock Palm=unlock'
+            status = f'FOLLOW [{",".join(self._collect_body_ids(targets))}] | OK=lock Palm=unlock'
             color = (0, 255, 255)
         elif has_body_now:
-            body_ids = []
-            seen = set()
-            for t in targets.targets:
-                if t.track_id not in seen and self._find_body_roi(t) is not None:
-                    body_ids.append(str(t.track_id))
-                    seen.add(t.track_id)
-            status = f'[VOICE MANUAL] DETECT [{",".join(body_ids)}]'
+            status = f'[VOICE MANUAL] DETECT [{",".join(self._collect_body_ids(targets))}]'
             color = (100, 100, 100)
         else:
             status = '[VOICE MANUAL] WAITING'

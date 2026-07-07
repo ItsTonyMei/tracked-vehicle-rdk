@@ -47,7 +47,7 @@ StereoNet 吃满 BPU 后，检测模型几乎无法得到推理时间。
 
 ### stereo_depth_fusion 节点（已创建但未启用）
 
-在 commit `78d395e` 中实现了 [stereo_depth_fusion.py](../src/tracked_vehicle/tracked_vehicle/stereo_depth_fusion.py)：
+在早期实验中实现了 `stereo_depth_fusion.py`（未合入主线）：
 
 - 订阅 `/StereoNetNode/stereonet_depth`（16-bit 深度图, mm）
 - 订阅 `/hobot_mono2d_body_detection`（人体检测框）

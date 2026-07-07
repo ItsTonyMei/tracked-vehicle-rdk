@@ -17,8 +17,14 @@ if [ ! -f "$FIRMWARE" ]; then
     exit 1
 fi
 
+if ! command -v stm32flash &>/dev/null; then
+    echo "ERROR: stm32flash not found. Install: apt-get install stm32flash"
+    exit 1
+fi
+
+SIZE=$(wc -c < "$FIRMWARE")  # portable across Linux/macOS/WSL
 echo "=== STM32 V3.0 Flasher ==="
-echo "Firmware: $FIRMWARE ($(stat -c%s "$FIRMWARE") bytes)"
+echo "Firmware: $FIRMWARE ($SIZE bytes)"
 echo "Port: $PORT"
 echo ""
 echo "Put STM32 into bootloader mode NOW (BOOT0+RESET)..."
