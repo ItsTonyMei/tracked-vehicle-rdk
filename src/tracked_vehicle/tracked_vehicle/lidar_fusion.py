@@ -98,12 +98,12 @@ def _greedy_match(cost_matrix, max_cost=1.2):
 
 
 def match_camera_to_lidar(cam_targets, lidar_clusters, cam_hfov_deg=70.0):
-    """匹配: 相机 bbox (角度+距离先验) ↔ LiDAR 聚类 (角度区间+距离)。
+    """匹配: 相机 bbox (角度) ↔ LiDAR 聚类 (角度区间)。
 
-    FOV 门控: 仅匹配相机视野内的 LiDAR 聚类, 防止后方 360° 点误匹配。
-    代价: 0.6 * 角度项 + 0.4 * 对数距离项 (消除不同距离但同角度时的歧义)。
+    纯角度匹配 + FOV 门控。不依赖 bbox 距离估计 (rotation=90 时不可靠)。
+    70° 窄 FOV 内同角度多目标场景极少, 角度匹配已足够。
 
-    cam_targets: [{track_id, angle_deg, angle_span_deg, bbox_dist}]
+    cam_targets: [{track_id, angle_deg, angle_span_deg}]
     lidar_clusters: [{angle_mid (rad), angle_span (rad), dist_mean, dist_min}]
     返回: [(cam_idx, lid_idx), ...]"""
     if not cam_targets or not lidar_clusters:
@@ -127,23 +127,12 @@ def match_camera_to_lidar(cam_targets, lidar_clusters, cam_hfov_deg=70.0):
             # 角度差 (无环绕: 相机 ±35° 内不存在 ±179° 歧义)
             angle_diff = abs(ca - la)
 
-            # 张角重叠惩罚
+            # 张角重叠惩罚: 零重叠 → span_penalty=1.0 → 需要 angle_diff<90° 才能 <2.0
             overlap = max(0, min(ca + cs/2, la + ls/2) - max(ca - cs/2, la - ls/2))
             span_penalty = 1.0 - overlap / max(cs, ls, 1)
-            angle_cost = angle_diff / 90.0 + span_penalty * 0.5
+            cost[i, j] = angle_diff / 90.0 + span_penalty
 
-            # 对数距离代价: 消除同角度不同距离的歧义
-            lidar_d = lc['dist_mean']
-            bbox_d = ct['bbox_dist']
-            if bbox_d > 0 and lidar_d > 0:
-                dist_ratio = lidar_d / bbox_d
-                log_dist_cost = min(abs(math.log(max(dist_ratio, 0.01))), 2.0)
-            else:
-                log_dist_cost = 1.0
-
-            cost[i, j] = 0.6 * angle_cost + 0.4 * log_dist_cost
-
-    return _greedy_match(cost)
+    return _greedy_match(cost, max_cost=1.0)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -223,11 +212,12 @@ class FusionEngine:
 
     MAX_OBS_TRACKS = 15
 
-    def __init__(self, cam_hfov_deg=70.0, cluster_dist=0.20,
-                 ekf_max_stale=5):
+    PERSON_STALE_MAX = 30   # 人物: 3s 超时 (容忍姿势变换导致短暂丢腿)
+    OBS_STALE_MAX    = 5    # 障碍物: 0.5s 超时 (快速清理)
+
+    def __init__(self, cam_hfov_deg=70.0, cluster_dist=0.20):
         self.clusterer = LidarClusterer(dist_thresh=cluster_dist)
         self.cam_hfov = cam_hfov_deg
-        self.ekf_max_stale = ekf_max_stale
         self._tracks = OrderedDict()       # track_id → EKF
         self._scan_ranges = None
         self._scan_angle_min = 0.0
@@ -278,12 +268,10 @@ class FusionEngine:
                 cx = r.x_offset + r.width / 2.0
                 angle_deg = (cx / img_w - 0.5) * self.cam_hfov
                 angle_span_deg = (r.width / img_w) * self.cam_hfov
-                est_dist = 1000.0 / r.width if r.width > 0 else 0
                 cam_list.append({
                     'track_id': t.track_id,
                     'angle_deg': angle_deg,
                     'angle_span_deg': angle_span_deg,
-                    'bbox_dist': est_dist,
                 })
 
         # ── 3. 数据关联 (角度+距离代价 + FOV 门控) ──
@@ -335,9 +323,12 @@ class FusionEngine:
             else:
                 self._tracks[obs_id].update(lx, ly)
 
-        # ── 6. 清理过期 track (stale 由统一递增 + update() 重置管理) ──
-        stale_ids = [tid for tid, ekf in self._tracks.items()
-                     if ekf.stale > self.ekf_max_stale]
+        # ── 6. 清理过期 track (人物/障碍物不同超时) ──
+        stale_ids = []
+        for tid, ekf in self._tracks.items():
+            limit = self.PERSON_STALE_MAX if tid >= 0 else self.OBS_STALE_MAX
+            if ekf.stale > limit:
+                stale_ids.append(tid)
         for tid in stale_ids:
             del self._tracks[tid]
 

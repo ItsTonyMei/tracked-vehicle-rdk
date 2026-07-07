@@ -27,8 +27,6 @@ class DisplayNode(Node):
 
     def __init__(self):
         super().__init__('display_node')
-        self.bbox_ref = self.declare_parameter('bbox_ref_width', 500.0).value
-        self.bbox_ref_dist = self.declare_parameter('bbox_ref_dist', 2.0).value
         self.rotate_deg = self.declare_parameter('rotate_deg', 0).value
 
         # ── 可配置参数 ──
@@ -142,6 +140,28 @@ class DisplayNode(Node):
     # ═══════════════════════════════════════════════════════════════
     # 空间匹配工具
     # ═══════════════════════════════════════════════════════════════
+
+    def _estimate_bbox_distance(self, rect, img_w):
+        """针孔模型距离估计, 适配 rotation=90 (bbox.width = 人体在图像中的高度).
+
+        用宽高比推断姿态:
+          aspect > 2.0 → 站立, visible_height ≈ 1.5m (上半身)
+          aspect > 1.2 → 半身/弯腰, visible_height ≈ 1.0m
+          else        → 坐着/蹲着, visible_height ≈ 0.7m (头+躯干)
+
+        dist = focal_px * visible_height / bbox.width
+        focal_px = (img_w/2) / tan(HFOV/2)"""
+        if rect.width <= 0:
+            return 0.0
+        aspect = rect.width / max(rect.height, 1)
+        if aspect > 2.0:
+            visible_h = 1.5
+        elif aspect > 1.2:
+            visible_h = 1.0
+        else:
+            visible_h = 0.7
+        f_px = (img_w / 2.0) / math.tan(math.radians(self._cam_hfov_deg / 2.0))
+        return f_px * visible_h / rect.width
 
     @staticmethod
     def _point_in_rect(px, py, rect):
@@ -490,12 +510,12 @@ class DisplayNode(Node):
                 r = body_roi
                 x1, y1 = int(r.x_offset), int(r.y_offset)
                 x2, y2 = x1 + int(r.width), y1 + int(r.height)
-                # 融合距离: LiDAR EKF → 回退 bbox 宽度估计
+                # 融合距离: LiDAR EKF (3s 超时容忍姿势变换) → 针孔模型兜底
                 fd = self._fused.get(t.track_id)
                 if fd is not None:
                     dist = fd['dist']
                 else:
-                    dist = (self.bbox_ref * self.bbox_ref_dist) / r.width if r.width > 0 else 0
+                    dist = self._estimate_bbox_distance(r, orig_w)
 
                 is_locked = (t.track_id == self._locked_id)
                 if is_locked:
