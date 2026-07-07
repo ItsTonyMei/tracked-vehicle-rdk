@@ -508,7 +508,7 @@ void loop() {
             g_motorArmed = false;
             escSet(PWM_NEUTRAL, PWM_NEUTRAL);
             beepNonBlocking(1, 250);  // long beep: disarm
-            Serial.println("[SAFE] 命令超时 60s, 自动锁定!");
+            Serial.println("[SAFE] 命令超时 2s, 自动锁定!");
         }
     }
 

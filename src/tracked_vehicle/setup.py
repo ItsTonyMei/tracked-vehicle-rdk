@@ -12,7 +12,7 @@ config_files = glob(os.path.join(_pkg_root, 'config', '*.yaml'))
 
 setup(
     name=package_name,
-    version='0.5.2',
+    version='0.6.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',

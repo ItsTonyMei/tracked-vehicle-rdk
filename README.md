@@ -144,31 +144,18 @@ tracked-vehicle-rdk/
 │   ├── hardware-setup.md             #    ✅ 硬件连线与接口对表
 │   ├── protocol-spec.md              #    ✅ MotorCmd / SBUS / VIS 协议定义
 │   ├── stereo-vision-verification.md #    ✅ 双目视觉验证报告
+│   ├── stereo-depth-exploration.md   #    ✅ 双目深度方案技术探索 + 踩坑
 │   ├── lessons-learned.md            #    ✅ 踩坑经验记录 (13条)
 │   ├── ROS-ExpansionboardV3.0-en-new-20250509.pdf    #    ✅ STM32 扩展板手册
-│   ├── reference/                    #    📦 调试参考存档
-│   │   ├── gs130w_bpu_display_ref.py #       双目 BPU 渲染调试
-│   │   ├── gs130w_x11_display_ref.py #       双目 X11 渲染调试
-│   │   └── voice_module/             #    ✅ AI 语音模块参考 (Speech_Lib/UART/ROS1/ROS2)
-│   ├── architecture.md               #    ⬜ 系统架构详细设计
-│   ├── migration-plan.md             #    ⬜ ESP32→X5 分阶段迁移计划
-│   └── safety-design.md              #    ⬜ 安全机制设计文档
 │
-├── config/                           # ⚙️ YAML 参数文件
-│   ├── stereo_calib.yaml             #    ✅ 双目标定 (GS130W SC132GS)
-│   ├── yolo_detection.yaml           #    ⬜ YOLO 人体检测配置
-│   ├── motor_config.yaml             #    ⬜ 电机 PWM 参数
-│   ├── follow_params.yaml            #    ⬜ 跟随算法参数
-│   └── lidar_params.yaml             #    ⬜ 激光雷达配置
+├── config/                           # ⚙️ YAML 参数文件 (由 launch 文件内联传参, 暂无独立配置文件)
 │
 ├── launch/                           # 🚀 ROS2 launch 文件
 │   ├── stereo_vision.launch.py       #    ✅ 双目采集 + StereoNet 深度图
 │   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
-│   ├── full_system_tracking.launch.py#    ✅ (已合并到 person_follow, 文件已移除)
-│   ├── person_follow.launch.py       #    ✅ 手势唤醒人体跟随 (10 节点流水线)
-│   └── full_system.launch.py         #    ⬜ 全传感器一键全系统启动
+│   └── person_follow.launch.py       #    ✅ 手势唤醒人体跟随 (10 节点流水线)
 │
-├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.5.1)
+├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.6.0)
 │   ├── setup.py                      #    ✅ colcon 构建配置 (zip_safe=False)
 │   ├── setup.cfg                     #    ✅ 可执行文件路径
 │   ├── package.xml                   #    ✅ ROS2 依赖声明
@@ -177,13 +164,14 @@ tracked-vehicle-rdk/
 │   │   ├── __init__.py               #    ✅ 包初始化
 │   │   ├── cmd_vel_bridge.py         #    ✅ cmd_vel → MotorCmd 串口桥接 (CRC-8/自动重连/可配置转向)
 │   │   ├── display_node.py           #    ✅ HDMI 屏显 + 手势锁定 (系统状态栏/空间重识别)
+│   │   ├── lidar_fusion.py           #    ✅ LiDAR-Camera 融合引擎 (聚类+匈牙利匹配+EKF)
 │   │   └── voice_bridge.py           #    ✅ AI 语音 → /cmd_vel 桥接 (CI1302 V01843/A5FA协议/唤醒词DNN级门控//system_ready事件驱动欢迎语)
 │   └── scripts/                      # 🔧 工具脚本 (已移除 stereonet 内部处理)
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理, .bin 不提交) ✅
 ├── ci1302_firmware/                   # 🎙️ CI1302 语音模块固件 ✅
 │   ├── 命令词播报词协议列表V3_履带车.xlsx  #    V3 履带车专用协议 (14条)
-│   └── sfw20260703092622158195706/       #    V01843 固件 + 刷机工具
+│   └── sfw20260703134807158195173/       #    V01843 v2 固件 + 刷机工具
 │
 ├── stm32_firmware/                   # 🔩 STM32 扩展板固件 v3.2 ✅
 │   ├── platformio.ini                #    PlatformIO 构建 (STM32F103RCT6)
