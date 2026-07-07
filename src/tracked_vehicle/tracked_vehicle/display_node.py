@@ -90,8 +90,9 @@ class DisplayNode(Node):
         self.sub_follow = self.create_subscription(
             Bool, '/follow_active', self.follow_cb, 10)
         self._follow_active = False
+        qos_scan = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT)
         self.sub_scan = self.create_subscription(
-            LaserScan, '/scan', self.scan_cb, 10)
+            LaserScan, '/scan', self.scan_cb, qos_scan)
         self._scan = None
         self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
         self._fused = {}
