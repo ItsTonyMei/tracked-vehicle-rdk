@@ -46,7 +46,7 @@ def generate_launch_description():
             'log_level': 'warn',
         }.items())
 
-    # ── 3. JPEG 编码 (给 display + web) ───────────────
+    # ── 3. JPEG 编码 (给 display HDMI 屏显) ─────────
     jpeg = IncludeLaunchDescription(PythonLaunchDescriptionSource([
         get_package_share_directory('hobot_codec'), '/launch/hobot_codec_encode.launch.py']),
         launch_arguments={

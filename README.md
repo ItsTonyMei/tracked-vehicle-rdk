@@ -171,7 +171,7 @@ tracked-vehicle-rdk/
 │   ├── 命令词播报词协议列表V3_履带车.xlsx  #    V3 履带车专用协议 (14条)
 │   └── sfw20260703134807158195173/       #    V01843 v2 固件 (readme.txt + xlsx)
 │
-├── stm32_firmware/                   # 🔩 STM32 扩展板固件 v3.2 ✅
+├── stm32_firmware/                   # 🔩 STM32 扩展板固件 V3.0 ✅
 │   ├── platformio.ini                #    PlatformIO 构建 (STM32F103RCT6)
 │   ├── flash_stm32.sh                #    ✅ 一键烧录脚本
 │   └── src/
@@ -204,7 +204,7 @@ tracked-vehicle-rdk/
 | L1   | **SBUS 遥控器优先**   | 遥控器直连 STM32，指令硬件级优先于 X5                                |
 | L1.5 | **IWDG 硬件看门狗**   | STM32 独立看门狗 4s 超时，主循环异常时自动复位 MCU → ESC 掉信号刹停 |
 | L2   | **命令超时刹停**      | X5 超过 2s 无新 MotorCmd → STM32 自动切中位 + 蜂鸣锁定              |
-| L3   | **X5 安全看门狗**     | cmd_vel_bridge: 60s 无 /cmd_vel → 发停止帧                          |
+| L3   | **X5 安全看门狗**     | cmd_vel_bridge: 60s 无 /cmd_vel → 发停止帧 (X5端, 独立于STM32端2s超时)                          |
 | L4   | **电调物理保护**      | ZTW Seal G2 内置过流/过热/堵转保护                                   |
 | L5   | **视觉丢帧暂留**      | body_tracking: 丢失 ≤300 帧维持上一指令, 避免急刹                   |
 | L6   | **串口自动恢复**      | cmd_vel_bridge / voice_bridge: 写失败自动重连                        |

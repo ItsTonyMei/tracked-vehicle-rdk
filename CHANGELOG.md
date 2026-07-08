@@ -46,7 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **AI 语音模块集成** — `voice_bridge.py` CI1302 → `/cmd_vel` ROS2 节点
   - 20Hz 轮询 `/dev/ttyUSB1`, 解析 `AA 55 [STATUS] [ID] FB` 帧
   - 8 条出厂语音指令映射 (前进/后退/左右转/旋转/停止), 动作 3s 自动停止
-  - `docs/reference/voice_module/`: Speech_Lib + RDKX5/UART/ROS1/ROS2 完整参考
+  - `docs/reference/voice_module/`: Speech_Lib + RDKX5/UART/ROS1/ROS2 参考 (已精简, 协议统一至 docs/protocol-spec.md)
 
 ### Changed
 
@@ -110,7 +110,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **flash_stm32.sh** — STM32 一键烧录脚本 (stm32flash + bootloader 轮询, 30s 窗口)
 - **udev 端口固定** — `/etc/udev/rules.d/99-tracked-vehicle.rules` CH340N→`/dev/stm32_board`
-- **烧录经验文档** — `memory/stm32-flash-experience.md` (6 条踩坑 + 恢复流程)
+- **stm32flash 烧录经验** — bootloader 时序 + CH340N USB 异常恢复 + udev 端口固定
 
 ## [0.5.0] - 2026-06-22
 

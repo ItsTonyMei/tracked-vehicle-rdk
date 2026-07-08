@@ -8,7 +8,6 @@ package_name = 'tracked_vehicle'
 # colcon requires relative paths for data_files; resolves via setup.py location
 _pkg_root = os.path.join(os.path.dirname(__file__), '..', '..')
 launch_files = glob(os.path.join(_pkg_root, 'launch', '*.py'))
-config_files = glob(os.path.join(_pkg_root, 'config', '*.yaml'))
 
 setup(
     name=package_name,
@@ -19,7 +18,6 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', launch_files),
-        ('share/' + package_name + '/config', config_files),
     ],
     install_requires=['setuptools'],
     zip_safe=False,  # data_files 必须解压后才能被 colcon 正确引用

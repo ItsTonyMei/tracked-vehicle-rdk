@@ -9,8 +9,7 @@
 
 // ─── PWM 参数 (ZTW Seal G2 双路无刷电调, 50Hz) ───
 // 1500μs 中位 / 1000-2000μs 范围 = 标准舵机 PWM 通用规范
-// 踩坑: 原 C06B 项目电调批次误用非标 1275μs 中位,
-//       1500μs 才是通用标准值, 非批次差异, 不同批次均应以标准值为准
+// 1500μs 为标准舵机 PWM 中位, 详见 docs/lessons-learned.md
 constexpr uint16_t PWM_NEUTRAL         = 1500;
 constexpr uint16_t PWM_MIN             = 1000;
 constexpr uint16_t PWM_MAX             = 2000;
