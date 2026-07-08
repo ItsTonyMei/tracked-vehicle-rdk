@@ -8,10 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **voice_bridge 协议升级** — CI1302 固件 V00681 → V01843, AA 55 → A5 FA
-  - 帧格式: `A5 FA 00 81 [CMD] 00 [CKSUM] FB` (8 bytes), 带累加和校验
-  - CMD 映射重新编号: 停止 0x06, 前进 0x07, 后退 0x08, 左转 0x09, 右转 0x0A, 左旋 0x0B, 右旋 0x0C, 跟随开 0x0D, 跟随关 0x0E
-  - 唤醒词 "你好瓦力" (CMD 0x01) 由 DNN 级独立模型门控 (`USE_SEPARATE_WAKEUP_EN=1`)
+- **voice_bridge 协议升级** — CI1302 固件 V00681 → V01843, AA 55 → A5 FA (8B 帧, 累加和校验, CMD 映射重新编号).
+  协议详情见 `docs/protocol-spec.md#4-ci1302-a5-fa` 及 `ci1302_firmware/sfw*/readme.txt`.
 - **欢迎语自动播报** — display_node 启动完成 (30s) 后通过 `/system_ready` topic 通知 voice_bridge 触发欢迎语, 与屏幕 "ALL SYSTEMS GO" 精确同步
 - **协议表重建** — 移除垃圾分类/机器人演示/颜色识别等 90+ 条无用命令词, 精简为 14 条履带车专用协议
 

@@ -13,15 +13,9 @@
  *   9. 蜂鸣器(PC5) + LED(PC13, active-LOW) 快/中/慢三速闪烁
  *  10. MPU9250 IMU SPI2 (PB12-15) 姿态读取 (PLL 时钟源)
  *
- * 踩坑记录:
- *   - genericSTM32F103RC Serial 默认不映射 USART1, 需显式 setRx/setTx
- *   - PCx 在 LQFP64 无硬件 TIM, 必须用 Servo 库; 通用 TIM ISR 被框架占用
- *   - V3.0 CH340N DTR/RTS 未接 NRST/BOOT0, 不支持自动下载
- *   - WFLY RF209S byte24 非标准 0x00, 需放宽帧尾校验; failsafe 用 bit4(0x10)
- *   - delay() 阻塞导致 SBUS 丢帧, 模式切换蜂鸣改用非阻塞状态机
- *   - Servo.attach 会重置 GPIOC, PC13 LED 可能被意外关闭
- *   - ZTW Seal G2 标准舵机 PWM 中位=1500μs (1000-2000μs 标准范围),
- *     原 C06B 项目误用 1275μs 非标值, 非通用规范
+ * 踩坑记录: 详见 docs/lessons-learned.md
+ *   - PCx 无硬件 TIM → Servo 库; Serial 需显式映射; CH340N 无自动下载
+ *   - WFLY RF209S byte24 非标, failsafe bit4; SBUS 阻塞丢帧 → 非阻塞状态机
  */
 
 #include <Arduino.h>

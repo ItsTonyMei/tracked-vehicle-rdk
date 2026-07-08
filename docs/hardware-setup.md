@@ -46,14 +46,8 @@ SBUS 信号本身是反相 UART (idle low)，经板载 NPN 三极管反相后变
 
 ### 烧录
 
-| 参数 | 值 |
-|------|-----|
-| 工具 | PlatformIO + stm32flash |
-| 端口 | COM5 (CH340N) |
-| 波特率 | 115200 |
-| 流程 | 手动 BOOT0 → RESET → 松 BOOT0 → `pio run -t upload` |
-
-V3.0 板的 CH340N 仅接了 TX/RX (USART1)，**DTR/RTS 未连接到 NRST/BOOT0**，不支持自动下载。必须手动进 bootloader。
+工具: PlatformIO + stm32flash. 端口和流程详见 `stm32_firmware/flash_stm32.sh` 及 `stm32_firmware/platformio.ini`.
+V3.0 CH340N DTR/RTS 未接 NRST/BOOT0, 不支持自动下载, 需手动 BOOT0→RESET→松BOOT0 进 bootloader.
 
 ### 板载 LED 一览
 
@@ -67,11 +61,4 @@ V3.0 板的 CH340N 仅接了 TX/RX (USART1)，**DTR/RTS 未连接到 NRST/BOOT0*
 
 ## 踩坑记录
 
-1. **PWM 引脚**: PC0-PC3 在 LQFP64 封装上无硬件 TIM 通道，必须用 Arduino Servo 库。不能用原 C06B 的 TIM3 寄存器操作法。
-2. **Serial 初始化**: `genericSTM32F103RC` 变体默认不映射 `Serial` 到 USART1，需在 `setup()` 中显式调用 `Serial.setRx(PA10); Serial.setTx(PA9);`
-3. **IMU 接口**: MPU9250 在此板上走 SPI (不是常见 I2C)，WHO_AM_I 读回 0x71 确认芯片在线。
-4. **SBUS 反相**: 板载三极管已将 SBUS 反相，USART2 配置为标准模式 (不开启 RXINV 位)。
-5. **自动下载不可用**: V3.0 的 CH340N DTR/RTS 引脚悬空，所有时序组合均无效。与 C06B 不同（C06B 的 CH9102 DTR/RTS 有自动下载电路）。
-6. **PB5 非板载 LED**: PB5 实为外接 RGB 灯带接口，不能用简单 digitalWrite 控制。板载 LED 经 GPIO 扫描测试确认为 PC13。
-7. **Servo.attach 重置 GPIOC**: `servoLeft.attach(PC3)` + `servoRight.attach(PC2)` 会重置 GPIOC 寄存器，导致同端口 PC13 LED 被意外关闭。若需 LED 在其他初始化之后亮起，需在 setup 末尾重新调用 `ledInit()`。
-8. **ZTW Seal G2 中位批次差异**: 1500μs 是标准舵机 PWM 通用中位值。原 C06B 项目电调批次误用了非标 1275μs，使用该非标值会导致现批次 ESC 无法完成自检。不同批次若有差异以手册实测为准。
+硬件相关踩坑统一记录在 **[lessons-learned.md](lessons-learned.md)** 及 `stm32_firmware/src/main.cpp` 注释中，此处不重复列出。

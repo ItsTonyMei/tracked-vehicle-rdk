@@ -132,7 +132,74 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 
 ---
 
-## 4. 上行遥测 — STM32 → X5 (预留)
+## 4. CI1302 A5 FA — X5 ↔ 语音模块
+
+### 帧格式 (8 bytes, 115200 bps)
+
+| Byte | 字段 | 说明 |
+|------|------|------|
+| 0 | `0xA5` | 帧头 1 |
+| 1 | `0xFA` | 帧头 2 |
+| 2 | `0x00` | 保留 |
+| 3 | `TYPE` | `0x81`=模块→X5 (识别), `0x82`=X5→模块 (播报) |
+| 4 | `CMD` | 命令 ID (见下表) |
+| 5 | `0x00` | 保留 |
+| 6 | `CKSUM` | `(A5+FA+00+TYPE+CMD+00) & 0xFF` |
+| 7 | `0xFB` | 帧尾 |
+
+### 命令 ID 映射
+
+| CMD | 名称 | 方向 | 说明 |
+|-----|------|------|------|
+| 0x01 | WAKEUP | 模块→X5 | 唤醒词 "你好瓦力" |
+| 0x02 | WELCOME | X5→模块 | 欢迎语播报 |
+| 0x06 | STOP | 模块→X5 | 停车 |
+| 0x07 | FORWARD | 模块→X5 | 前进 |
+| 0x08 | BACKWARD | 模块→X5 | 后退 |
+| 0x09 | TURN_LEFT | 模块→X5 | 左转 |
+| 0x0A | TURN_RIGHT | 模块→X5 | 右转 |
+| 0x0B | SPIN_LEFT | 模块→X5 | 左旋 |
+| 0x0C | SPIN_RIGHT | 模块→X5 | 右旋 |
+| 0x0D | FOLLOW_ON | 模块→X5 | 开启跟随 |
+| 0x0E | FOLLOW_OFF | 模块→X5 | 关闭跟随 |
+
+完整 14 条命令词表见 `ci1302_firmware/sfw*/readme.txt`。
+
+### 固件
+
+- 版本: CI1302 V01843 (内部RC + 关闭波特率校准)
+- 唤醒词: 独立 DNN 模型门控 (`USE_SEPARATE_WAKEUP_EN=1`)
+- 文件: `ci1302_firmware/CI1302_chinese_1mic_V01843_UART1_115200_2M.bin`
+
+### 实现参考
+
+X5 端节点: `voice_bridge.py` (`_TYPE_FROM_CI1302=0x81`, `_TYPE_TO_CI1302=0x82`)
+
+---
+
+## 5. PWM 输出 — STM32 → 电调
+
+| 参数 | 值 |
+|------|-----|
+| 方式 | Arduino Servo 库软件 PWM |
+| 频率 | 50Hz (周期 20000μs) |
+| 中位 | 1500μs (标准舵机 PWM 规范, 非1257/1275等非标值) |
+| 最小 | 1000μs |
+| 最大 | 2000μs |
+| 左电机 | S1 — PC3 |
+| 右电机 | S2 — PC2 |
+
+### 坦克混控
+
+```
+sOff = steering - 1500
+left  = throttle + sOff    (钳位 1000-2000)
+right = throttle - sOff    (钳位 1000-2000)
+```
+
+---
+
+## 6. 上行遥测 — STM32 → X5 (预留)
 
 ```text
 [0xBB][EncL:2B][EncR:2B][CurL:1B][CurR:1B][Flags:1B][ErrCode:1B][CRC8:1B]

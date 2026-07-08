@@ -188,41 +188,15 @@ tracked-vehicle-rdk/
 
 ## 🔌 通信协议
 
-### MotorCmd — X5 → STM32 运动指令
+详见 **[docs/protocol-spec.md](docs/protocol-spec.md)** — 所有协议的单一权威来源.
 
-| Byte | 字段 | 说明 |
+| 协议 | 方向 | 用途 |
 |------|------|------|
-| 0 | `0xAA` | 帧头 |
-| 1 | `throttle_lo` | 油门低字节 |
-| 2 | `throttle_hi` | 油门高字节 |
-| 3 | `steering_lo` | 转向低字节 |
-| 4 | `steering_hi` | 转向高字节 |
-| 5 | `CRC8` | CRC-8-MAXIM 校验 |
-
-- 波特率：**115200 bps**
-- 发送间隔：**跟随 /cmd_vel 发布频率**（body_tracking 约 30Hz）
-- 停止值：`throttle=1500, steering=1500`
-
-### PWM 输出 — STM32 → 电调
-
-| 参数 | 值 |
-|------|-----|
-| 方式 | Arduino Servo 库 (PC0-3 无硬件 TIM) |
-| 频率 | 50Hz (周期 20000μs) |
-| 中位 | 1500μs |
-| 最小 | 1000μs |
-| 最大 | 2000μs |
-| 左电机 | S1 — PC3 |
-| 右电机 | S2 — PC2 |
-
-### VIS 帧 — OpenMV → X5
-
-```
-"VIS:cx,cy,w,h,feetY,conf,PERSON,distScore,tofDist*CRC8\\r\\n"
-```
-
-- 波特率：**4800 bps**
-- 校验：XOR checksum over payload (before `*`)
+| MotorCmd | X5 → STM32 | 运动指令 (6B, 115200bps, CRC-8) |
+| SBUS | 遥控器 → STM32 | 手控接管 (25B, 100kbps, CH5/CH6) |
+| CI1302 A5 FA | X5 ↔ CI1302 | 语音识别/播报 (8B, 115200bps) |
+| PWM | STM32 → ESC | 双路电调 (50Hz, 1000-2000μs) |
+| VIS | OpenMV → X5 | 后视辅助 (ASCII, 4800bps) |
 
 ---
 
