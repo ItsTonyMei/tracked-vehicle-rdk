@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
-"""本地屏显 — 手势锁定跟随 (v2: 空间匹配 + 状态机)"""
+"""感知节点 — 多传感器融合 + 目标锁定 + 系统状态 (HDMI渲染)
+
+数据职责 (单一权威源):
+  - /locked_target   (Float32): 锁定人物的 LiDAR EKF 融合距离 (米), 无锁时为 NaN
+  - /locked_track_id (Int32):   当前锁定的 track_id, 解锁时为 -1
+  - /system_ready    (Bool):    系统启动就绪信号
+  - HDMI 屏显: 检测框 + 距离 + 系统状态栏 + 启动进度
+
+手势锁定状态机:
+  IDLE     — 无锁定, 等待 OK 手势
+  LOCKED   — 已锁定, 另一人 OK 则切换, 被锁者 Palm 则解除
+  HOLDING  — 被锁者短暂消失 (<5s), 维持锁定等待重现; 超时 → IDLE
+"""
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, LaserScan
 from ai_msgs.msg import PerceptionTargets
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32, Int32
 import cv2
 import numpy as np
 import math
@@ -13,20 +25,11 @@ import math
 from .lidar_fusion import FusionEngine, _find_body_roi
 
 
-class DisplayNode(Node):
-    """本地屏显 — 手势锁定跟随.
-
-    所有回调与 render 运行在默认 SingleThreadedExecutor 上，无需显式同步。
-    若切换为 MultiThreadedExecutor，需为 _frame/_targets/_locked_id 加锁。
-
-    锁定状态机:
-      IDLE     — 无锁定, 等待 OK 手势
-      LOCKED   — 已锁定某人, 其他人进出不影响; 另一人做 OK 则切换; 被锁者做 Palm 则解除
-      HOLDING  — 被锁者短暂消失 (<2s), 维持锁定等待重现; 超时 → IDLE
-    """
+class PerceptionNode(Node):
+    """感知权威: 融合距离 + 手势锁定 + 系统状态 + HDMI 渲染."""
 
     def __init__(self):
-        super().__init__('display_node')
+        super().__init__('perception_node')
         self.rotate_deg = self.declare_parameter('rotate_deg', 0).value
 
         # ── 可配置参数 ──
@@ -46,7 +49,6 @@ class DisplayNode(Node):
         self._startup_done = False
         self._start_ts = 0.0
         self._last_startup_check = 0.0
-        # 期望启动的子系统 (topic, 显示名称)
         self._SUBSYSTEMS = [
             ('/image',             'Camera'),
             ('/hobot_mono2d_body_detection', 'Body Det'),
@@ -57,19 +59,19 @@ class DisplayNode(Node):
             ('/follow_active',     'Voice'),
             ('/scan',              'LiDAR'),
         ]
-        self._startup_ok = {}          # name → bool
-        self._startup_order = []       # 就绪顺序
-        self._startup_failed = set()   # 超时未就绪
-        self._startup_timeout_s = 25.0 # 单项超时阈值
+        self._startup_ok = {}
+        self._startup_order = []
+        self._startup_failed = set()
+        self._startup_timeout_s = 25.0
 
         # ── 手势投票 ──
         self._gesture_ts = 0.0
         self._gesture_votes = {}
 
         # ── 锁定状态机 ──
-        self._locked_id = None    # 当前锁定的 track_id (None=IDLE)
-        self._lost_since = 0.0    # 被锁者消失的时间戳 (0=可见)
-        self._empty_since = 0.0   # 画面无人开始的时间戳 (0=有人)
+        self._locked_id = None
+        self._lost_since = 0.0
+        self._empty_since = 0.0
 
         # ── 渲染 ──
         self._flash = 0
@@ -77,7 +79,7 @@ class DisplayNode(Node):
         self._window = 'RDK X5 Tracker'
         self._init_display()
 
-        # QoS: 相机帧用 BEST_EFFORT 避免背压; AI 检测用 BEST_EFFORT 深度 5
+        # QoS
         qos_img = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
         qos_det = QoSProfile(depth=5, reliability=QoSReliabilityPolicy.BEST_EFFORT)
         self.sub_img = self.create_subscription(CompressedImage, '/image', self.img_cb, qos_img)
@@ -94,27 +96,30 @@ class DisplayNode(Node):
         self._scan = None
         self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
         self._fused = {}
-        self.timer = self.create_timer(1.0/60.0, self.render)
+
+        # ── 下行发布 (运动仲裁者消费) ──
+        self._locked_target_pub = self.create_publisher(Float32, '/locked_target', 10)
+        self._locked_track_id_pub = self.create_publisher(Int32, '/locked_track_id', 10)
+        self._last_published_id = -2  # 强制首次发布
+
         self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
+        self.timer = self.create_timer(1.0/60.0, self.render)
         self._start_ts = self.get_clock().now().nanoseconds / 1e9
 
     # ═══════════════════════════════════════════════════════════════
     # 显示初始化
-    # ═══════════════════════════════════════════════════════════════
 
     def _init_display(self):
         cv2.namedWindow(self._window, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self._window, 1024, 600)
         cv2.moveWindow(self._window, 0, 0)
         cv2.setWindowProperty(self._window, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        self.get_logger().info('display_node OK')
+        self.get_logger().info('perception_node OK')
 
     # ═══════════════════════════════════════════════════════════════
     # 启动进度检测
-    # ═══════════════════════════════════════════════════════════════
 
     def _check_startup_progress(self):
-        """每 2s 检测各子系统 topic 是否有 publisher, 更新启动进度."""
         now = self.get_clock().now().nanoseconds / 1e9
         if now - self._last_startup_check < 2.0:
             return
@@ -129,28 +134,18 @@ class DisplayNode(Node):
                     self.get_logger().info(
                         f'Startup [{len(self._startup_order)}/{len(self._SUBSYSTEMS)}]: {name}')
 
-        # 超时检测
         for topic, name in self._SUBSYSTEMS:
             if (not self._startup_ok.get(name, False) and
                 now - self._start_ts > self._startup_timeout_s):
                 self._startup_failed.add(name)
-                self._startup_ok[name] = False  # 标记为失败
+                self._startup_ok[name] = False
                 self.get_logger().warn(f'Startup TIMEOUT: {name} ({topic})')
 
     # ═══════════════════════════════════════════════════════════════
     # 空间匹配工具
-    # ═══════════════════════════════════════════════════════════════
 
     def _estimate_bbox_distance(self, rect, img_w):
-        """针孔模型距离估计, 适配 rotation=90 (bbox.width = 人体在图像中的高度).
-
-        用宽高比推断姿态:
-          aspect > 2.0 → 站立, visible_height ≈ 1.5m (上半身)
-          aspect > 1.2 → 半身/弯腰, visible_height ≈ 1.0m
-          else        → 坐着/蹲着, visible_height ≈ 0.7m (头+躯干)
-
-        dist = focal_px * visible_height / bbox.width
-        focal_px = (img_w/2) / tan(HFOV/2)"""
+        """针孔模型距离估计 — 仅在不融合 LiDAR 时作为兜底."""
         if rect.width <= 0:
             return 0.0
         aspect = rect.width / max(rect.height, 1)
@@ -170,7 +165,6 @@ class DisplayNode(Node):
 
     @staticmethod
     def _collect_body_ids(targets):
-        """返回所有有 body ROI 的 track_id 字符串列表 (去重)."""
         if targets is None:
             return []
         ids = []
@@ -182,12 +176,10 @@ class DisplayNode(Node):
         return ids
 
     def _match_gesture_to_person(self, gesture_msg):
-        """手势-人体空间匹配: 返回做 OK 手势的 body track_id, 或 None."""
         if self._targets is None or gesture_msg is None:
             return None
 
-        # 收集 body detection 中的 body ROI
-        body_map = {}  # track_id → rect
+        body_map = {}
         for bt in self._targets.targets:
             if bt.type != 'person':
                 continue
@@ -197,11 +189,10 @@ class DisplayNode(Node):
         if not body_map:
             return None
 
-        # 对手势消息中每个 target, 只取 hand 类型 ROI 的中心点进行匹配
         for gt in gesture_msg.targets:
             for groi in gt.rois:
                 if groi.type != 'hand':
-                    continue  # 跳过 body/head/face, 只匹配手部 ROI
+                    continue
                 gx = groi.rect.x_offset + groi.rect.width / 2.0
                 gy = groi.rect.y_offset + groi.rect.height / 2.0
                 for tid, brect in body_map.items():
@@ -211,7 +202,6 @@ class DisplayNode(Node):
 
     # ═══════════════════════════════════════════════════════════════
     # 回调
-    # ═══════════════════════════════════════════════════════════════
 
     def img_cb(self, msg: CompressedImage):
         raw = np.frombuffer(msg.data, dtype=np.uint8)
@@ -219,7 +209,6 @@ class DisplayNode(Node):
 
     @staticmethod
     def _has_body(targets):
-        """检查 targets 中是否存在 body ROI（而非仅 head/face/hand）"""
         if targets is None:
             return False
         for t in targets.targets:
@@ -230,7 +219,6 @@ class DisplayNode(Node):
 
     @staticmethod
     def _target_visible(targets, track_id):
-        """检查 track_id 对应的人是否有 body ROI 在画面中"""
         if targets is None:
             return False
         for t in targets.targets:
@@ -241,7 +229,6 @@ class DisplayNode(Node):
         return False
 
     def _get_body_center(self, targets, track_id):
-        """获取指定 track_id 的 body ROI 中心点, 无则返回 None."""
         if targets is None:
             return None
         for t in targets.targets:
@@ -253,7 +240,6 @@ class DisplayNode(Node):
         return None
 
     def _find_nearest_body(self, targets, cx, cy, max_dist):
-        """在 targets 中找距离 (cx,cy) 最近的 body, 返回 (track_id, dist) 或 (None, inf)."""
         best_id, best_dist = None, float('inf')
         if targets is None:
             return None, best_dist
@@ -273,7 +259,6 @@ class DisplayNode(Node):
         self._targets = msg
         self._last_det_ts = now
 
-        # ── 画面无人检测 → 超时重置 (检查 body ROI 而非 person type) ──
         if not self._has_body(msg):
             if self._empty_since == 0.0:
                 self._empty_since = now
@@ -287,19 +272,16 @@ class DisplayNode(Node):
         else:
             self._empty_since = 0.0
 
-        # ── 追踪被锁者存在性 (检查 body ROI) ──
         if self._locked_id is not None:
             if self._target_visible(msg, self._locked_id):
                 self._lost_since = 0.0
-                # 更新最后已知位置
                 c = self._get_body_center(msg, self._locked_id)
                 if c:
                     self._last_known_cx, self._last_known_cy = c
             else:
                 if self._lost_since == 0.0:
-                    self._lost_since = now  # 开始 HOLDING
+                    self._lost_since = now
 
-                # ── 空间重识别: 检查是否有新 body 出现在最后已知位置附近 ──
                 if hasattr(self, '_last_known_cx'):
                     matched_id, dist = self._find_nearest_body(
                         msg, self._last_known_cx, self._last_known_cy, 150.0)
@@ -309,7 +291,6 @@ class DisplayNode(Node):
                         self._locked_id = matched_id
                         self._lost_since = 0.0
 
-                # 仍未找到 → 检查超时
                 if self._lost_since > 0.0 and now - self._lost_since > self._lost_hold_s:
                     self.get_logger().info(
                         f'#{self._locked_id} 消失 >{self._lost_hold_s:.0f}s, 解除锁定')
@@ -317,8 +298,6 @@ class DisplayNode(Node):
                     self._lost_since = 0.0
 
     def gesture_cb(self, msg: PerceptionTargets):
-        """手势回调: 投票防抖, OK(11)=锁定, Palm(5)=解除.
-        处理第一个非零手势后立即返回，避免后续 gesture=0 降级已积累的投票."""
         now = self.get_clock().now().nanoseconds / 1e9
 
         for t in msg.targets:
@@ -343,7 +322,7 @@ class DisplayNode(Node):
                         self._on_ok(now, msg)
                     elif code == 5:
                         self._on_palm(now)
-                return  # 只处理第一个有效手势，防止后续 gesture=0 清零投票
+                return
 
     def follow_cb(self, msg: Bool):
         self._follow_active = msg.data
@@ -353,10 +332,8 @@ class DisplayNode(Node):
 
     # ═══════════════════════════════════════════════════════════════
     # 锁定状态机
-    # ═══════════════════════════════════════════════════════════════
 
     def _on_ok(self, now, gesture_msg):
-        """OK 手势: 空间匹配 → 锁定做出手势的人."""
         if self._targets is None:
             return
         if now - self._last_det_ts > self._max_det_age_s:
@@ -369,14 +346,14 @@ class DisplayNode(Node):
             return
 
         if matched_id == self._locked_id:
-            return  # 同一人，无需操作
+            return
 
         old_id = self._locked_id
         self._locked_id = matched_id
         self._gesture_ts = now
         self._lost_since = 0.0
         self._flash = 15
-        self._flash_color = (0, 0, 255)  # 锁定=红色闪框
+        self._flash_color = (0, 0, 255)
 
         if old_id is None:
             self.get_logger().info(f'LOCKED track_id={matched_id}')
@@ -384,7 +361,6 @@ class DisplayNode(Node):
             self.get_logger().info(f'SWITCHED #{old_id} -> #{matched_id}')
 
     def _on_palm(self, now):
-        """Palm 手势: 仅当已锁定时解除."""
         if self._locked_id is None:
             return
         self.get_logger().info(f'UNLOCKED (was #{self._locked_id})')
@@ -392,35 +368,28 @@ class DisplayNode(Node):
         self._lost_since = 0.0
         self._gesture_ts = now
         self._flash = 15
-        self._flash_color = (0, 255, 0)  # 解锁=绿色闪框
+        self._flash_color = (0, 255, 0)
 
     # ═══════════════════════════════════════════════════════════════
     # 系统状态读取
-    # ═══════════════════════════════════════════════════════════════
 
     _FONT = cv2.FONT_HERSHEY_SIMPLEX
     _FONT_SCALE = 0.7
     _FONT_THICK = 2
     _LABEL_H = 32
-    _DOT_R = 7  # 状态指示灯半径
+    _DOT_R = 7
 
-    # CPU 使用率需要两次 /proc/stat 采样——缓存上一次的 total/idle
     _prev_cpu_total = 0
     _prev_cpu_idle = 0
 
     @staticmethod
     def _read_sys_info():
-        """读取 X5 系统状态: CPU%/BPU%/MEM%/温度. 每 1s 刷新一次."""
         info = {}
-
-        # ── 温度 ──
         try:
             with open('/sys/class/thermal/thermal_zone0/temp') as f:
                 info['temp'] = float(f.read().strip()) / 1000.0
         except Exception:
             info['temp'] = 0.0
-
-        # ── 内存 % ──
         try:
             total = available = 0
             with open('/proc/meminfo') as f:
@@ -434,14 +403,11 @@ class DisplayNode(Node):
             info['mem_pct'] = (total - available) / total * 100.0 if total else 0.0
         except Exception:
             info['mem_pct'] = 0.0
-
-        # ── BPU % ──
         try:
             with open('/sys/devices/system/bpu/ratio') as f:
                 info['bpu_pct'] = float(f.read().strip())
         except Exception:
             info['bpu_pct'] = 0.0
-
         return info
 
     _sys_info = {}
@@ -449,19 +415,16 @@ class DisplayNode(Node):
     _cpu_pct = 0.0
 
     def _get_sys_info(self):
-        """读取系统状态 (1Hz 缓存) + 计算 CPU 占用率."""
         now = self.get_clock().now().nanoseconds / 1e9
         if now - self._sys_info_ts > 1.0:
             self._sys_info = self._read_sys_info()
             self._sys_info_ts = now
-
-            # CPU 占用率: 两次 /proc/stat 采样的差值
             try:
                 with open('/proc/stat') as f:
-                    fields = f.readline().split()[1:]  # skip "cpu"
+                    fields = f.readline().split()[1:]
                 jiffies = [int(x) for x in fields]
                 total = sum(jiffies)
-                idle = jiffies[3] + (jiffies[4] if len(jiffies) > 4 else 0)  # idle + iowait
+                idle = jiffies[3] + (jiffies[4] if len(jiffies) > 4 else 0)
                 if self._prev_cpu_total > 0:
                     d_total = total - self._prev_cpu_total
                     d_idle = idle - self._prev_cpu_idle
@@ -470,12 +433,10 @@ class DisplayNode(Node):
                 self._prev_cpu_idle = idle
             except Exception:
                 self._cpu_pct = 0.0
-
         return self._sys_info
 
     # ═══════════════════════════════════════════════════════════════
     # 渲染
-    # ═══════════════════════════════════════════════════════════════
 
     @staticmethod
     def _rotate(img, deg):
@@ -499,6 +460,18 @@ class DisplayNode(Node):
             self._scan, self._targets, orig_w, now)
         holding = (self._locked_id is not None and self._lost_since > 0.0)
 
+        # ── 发布锁定目标距离 + track_id (运动仲裁者消费) ──
+        if self._locked_id is not None and self._locked_id in self._fused:
+            dist_msg = Float32(data=float(self._fused[self._locked_id]['dist']))
+            self._locked_target_pub.publish(dist_msg)
+        else:
+            self._locked_target_pub.publish(Float32(data=float('nan')))
+
+        if self._locked_id != self._last_published_id:
+            self._locked_track_id_pub.publish(
+                Int32(data=self._locked_id if self._locked_id is not None else -1))
+            self._last_published_id = self._locked_id
+
         if targets is not None:
             for t in targets.targets:
                 if t.type != 'person':
@@ -510,7 +483,7 @@ class DisplayNode(Node):
                 r = body_roi
                 x1, y1 = int(r.x_offset), int(r.y_offset)
                 x2, y2 = x1 + int(r.width), y1 + int(r.height)
-                # 融合距离: LiDAR EKF (3s 超时容忍姿势变换) → 针孔模型兜底
+
                 fd = self._fused.get(t.track_id)
                 if fd is not None:
                     dist = fd['dist']
@@ -537,7 +510,7 @@ class DisplayNode(Node):
                 by = y1 + int(r.height) // 2
                 cv2.line(frame, (bx, by), (orig_w // 2, orig_h // 2), box_color, 2)
 
-        # 中心十字 (白色加粗)
+        # 中心十字
         cx0, cy0 = orig_w // 2, orig_h // 2
         cv2.line(frame, (cx0 - 25, cy0), (cx0 + 25, cy0), (255, 255, 255), 2)
         cv2.line(frame, (cx0, cy0 - 25), (cx0, cy0 + 25), (255, 255, 255), 2)
@@ -562,7 +535,7 @@ class DisplayNode(Node):
             cv2.rectangle(frame, (0, 0), (scr_w - 1, scr_h - 1), self._flash_color, t)
             self._flash -= 1
 
-        # ── X5 系统状态栏 (左上角) ──
+        # ── X5 系统状态栏 ──
         si = self._get_sys_info()
         cpu_pct = self._cpu_pct
         bpu_pct = si.get('bpu_pct', 0)
@@ -570,7 +543,6 @@ class DisplayNode(Node):
         temp = si.get('temp', 0)
 
         def _draw_dot(x, y, pct, warn_th=80, crit_th=95):
-            """根据百分比画状态指示灯: 绿(<warn) / 黄(<crit) / 红(>=crit)"""
             if pct >= crit_th:
                 c = (0, 0, 255)
             elif pct >= warn_th:
@@ -579,7 +551,6 @@ class DisplayNode(Node):
                 c = (0, 255, 0)
             cv2.circle(frame, (x, y), self._DOT_R, c, -1)
 
-        # 第一行: 指示灯 + CPU/BPU/MEM/TEMP + 节点计数
         row1_y = 22
         x = 10
         for label, pct in [('CPU', cpu_pct), ('BPU', bpu_pct), ('MEM', mem_pct)]:
@@ -588,7 +559,6 @@ class DisplayNode(Node):
                         self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
             x += 160
 
-        # 温度
         if temp >= 90:
             tc = (0, 0, 255)
         elif temp >= 80:
@@ -599,7 +569,6 @@ class DisplayNode(Node):
         cv2.putText(frame, f'TEMP:{temp:.0f}C', (x + 20, row1_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # 第二行: FPS + 跟随状态
         row2_y = 52
         fps_val = targets.fps if targets is not None else 0
         if fps_val > 30:
@@ -615,7 +584,6 @@ class DisplayNode(Node):
         cv2.putText(frame, fps_str, (30, row2_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # 跟随模式指示
         x = 170
         if self._follow_active:
             mode_str = 'MODE:FOLLOW'
@@ -627,18 +595,15 @@ class DisplayNode(Node):
         cv2.putText(frame, mode_str, (x + 20, row2_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
-        # ── 启动进度检测 ──
         if not self._startup_done:
             self._check_startup_progress()
 
-        # ── 系统状态行: 🔵 状态  [====] 7/8  TIMEOUT: xxx ──
         n_ok = len(self._startup_order)
         n_total = len(self._SUBSYSTEMS)
         n_fail = len(self._startup_failed)
         progress = n_ok / n_total if n_total > 0 else 0
         row_y = h - 52
 
-        # 1) 颜色块
         if self._startup_done:
             dot_color = (0, 255, 0)
         elif n_fail > 0:
@@ -647,7 +612,6 @@ class DisplayNode(Node):
             dot_color = (0, 255, 255)
         cv2.circle(frame, (10 + self._DOT_R, row_y - 2), self._DOT_R, dot_color, -1)
 
-        # 2) 状态文字
         if self._startup_done:
             if n_fail > 0:
                 status_text = f'SYS OK ({n_fail} fail)'
@@ -663,7 +627,6 @@ class DisplayNode(Node):
                     self._FONT, self._FONT_SCALE, status_color, self._FONT_THICK)
         status_w = cv2.getTextSize(status_text, self._FONT, self._FONT_SCALE, self._FONT_THICK)[0][0]
 
-        # 3) 进度条
         bar_x = status_x + status_w + 12
         bar_w, bar_h = 160, 8
         bar_y = row_y - 2
@@ -675,20 +638,17 @@ class DisplayNode(Node):
                           fill_color, -1)
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (100, 100, 100), 1)
 
-        # 4) 数字化统计
         x = bar_x + bar_w + 8
         cv2.putText(frame, f'{n_ok}/{n_total}', (x, row_y + 6),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
         stat_w = cv2.getTextSize(f'{n_ok}/{n_total}', self._FONT, self._FONT_SCALE, self._FONT_THICK)[0][0]
 
-        # 5) 异常报错
         if n_fail > 0:
             failed_names = ', '.join(sorted(self._startup_failed))
             fail_text = f'TIMEOUT: {failed_names}'
             cv2.putText(frame, fail_text, (x + stat_w + 10, row_y + 6),
                         self._FONT, self._FONT_SCALE, (0, 0, 255), self._FONT_THICK)
 
-        # 系统就绪判定
         if not self._startup_done and now - self._start_ts > 30.0:
             self._startup_done = True
             self._ready_pub.publish(Bool(data=True))
@@ -696,9 +656,6 @@ class DisplayNode(Node):
                 failed_names = ', '.join(sorted(self._startup_failed))
                 self.get_logger().warn(f'STARTUP DONE with {n_fail} timeout(s): {failed_names}')
 
-        # ── DETECT 状态条 (底部, 颜色块+白色文字) ──
-        has_body_now = self._has_body(targets)
-        follow_on = self._follow_active
         bar_y = h - 16
         if holding:
             remaining = max(0, self._lost_hold_s - (
@@ -730,5 +687,5 @@ class DisplayNode(Node):
 
 def main():
     rclpy.init()
-    rclpy.spin(DisplayNode())
+    rclpy.spin(PerceptionNode())
     rclpy.shutdown()

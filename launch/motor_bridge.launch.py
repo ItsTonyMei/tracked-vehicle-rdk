@@ -33,8 +33,8 @@ def generate_launch_description():
 
         Node(
             package='tracked_vehicle',
-            executable='cmd_vel_bridge',
-            name='cmd_vel_bridge',
+            executable='motor_bridge',
+            name='motor_bridge',
             output='screen',
             parameters=[{
                 'serial_port': LaunchConfiguration('serial_port'),

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-cmd_vel → MotorCmd 串口桥接节点
+motor_bridge — Twist → MotorCmd 串口桥接节点 (纯执行, 零决策)
+
 订阅 ROS2 /cmd_vel (Twist), 转换为 6 字节 MotorCmd 帧, 通过 UART 下发给 STM32
 
 MotorCmd 帧格式:
   [0xAA][th_lo][th_hi][st_lo][st_hi][CRC8]  6 bytes @ 115200 bps
-  throttle/steering: uint16 LE, 1500μs=停止, 1000-2000μs 范围
+  throttle/steering: uint16 LE, 1500us=停止, 1000-2000us 范围
   CRC8: poly=0x07, init=0x00, 覆盖 byte1-4
 """
 
@@ -26,15 +27,15 @@ def crc8(data: bytes) -> int:
     return crc
 
 
-class CmdVelBridge(Node):
-    def __init__(self):
-        super().__init__('cmd_vel_bridge')
+class MotorBridge(Node):
+    """执行层: /cmd_vel → Serial MotorCmd. 不做任何决策."""
 
-        # 串口配置
+    def __init__(self):
+        super().__init__('motor_bridge')
+
         port = self.declare_parameter('serial_port', '/dev/stm32_board').value
         baud = self.declare_parameter('serial_baud', 115200).value
 
-        # 速度 → PWM 映射参数
         self.linear_gain = self.declare_parameter('linear_gain', 500.0).value
         self.angular_gain = self.declare_parameter('angular_gain', 300.0).value
         self.steering_invert = self.declare_parameter('steering_invert', True).value
@@ -42,7 +43,6 @@ class CmdVelBridge(Node):
         self.pwm_min = 1000
         self.pwm_max = 2000
 
-        # 打开串口
         self._ser_open = False
         try:
             self.ser = serial.Serial(port, baud, timeout=0.1)
@@ -52,10 +52,8 @@ class CmdVelBridge(Node):
             self.get_logger().fatal(f'无法打开串口 {port}: {e}')
             raise
 
-        # 订阅 /cmd_vel
         self.sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_cb, 10)
 
-        # 命令超时: 无新命令 → 发停止帧, 定时检查周期 = min(5s, timeout/10)
         self.timeout = self.declare_parameter('cmd_timeout_s', 60.0).value
         self.last_cmd_time = self.get_clock().now()
         self.timer = self.create_timer(min(5.0, self.timeout / 10.0), self.watchdog)
@@ -86,7 +84,7 @@ class CmdVelBridge(Node):
             self._send(self.pwm_center, self.pwm_center)
 
     def _send(self, throttle: int, steering: int):
-        payload = struct.pack('<HH', throttle, steering)  # 4 bytes LE
+        payload = struct.pack('<HH', throttle, steering)
         frame = b'\xAA' + payload + bytes([crc8(payload)])
         try:
             self.ser.write(frame)
@@ -111,7 +109,7 @@ class CmdVelBridge(Node):
 
 def main():
     rclpy.init()
-    node = CmdVelBridge()
+    node = MotorBridge()
     try:
         rclpy.spin(node)
     finally:

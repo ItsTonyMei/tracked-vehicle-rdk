@@ -27,9 +27,9 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
-            'cmd_vel_bridge = tracked_vehicle.cmd_vel_bridge:main',
-            'display_node = tracked_vehicle.display_node:main',
-            'voice_bridge = tracked_vehicle.voice_bridge:main',
+            'perception_node = tracked_vehicle.perception_node:main',
+            'motion_arbiter = tracked_vehicle.motion_arbiter:main',
+            'motor_bridge = tracked_vehicle.motor_bridge:main',
         ],
     },
 )

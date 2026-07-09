@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
-voice_bridge — CI1302 语音识别 → /cmd_vel 仲裁节点
+motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
 
 职责:
-  1. 解析 CI1302 UART 语音识别结果 (A5 FA 00 81 [CMD] 00 [CKSUM] FB @ 115200)
-  2. 状态机仲裁: VOICE_MANUAL (默认) / FOLLOWING (中继 body_tracking)
-  3. 作为 /cmd_vel 唯一发布者，消除多写冲突
-  4. 收到 /system_ready 信号后触发欢迎语播报 (与 display "ALL SYSTEMS GO" 同步)
+  1. CI1302 语音识别 → 运动命令 + FOLLOW/STOP 状态切换
+  2. FOLLOW 模式: 由 /locked_target LiDAR 融合距离覆写 linear.x，
+     保留 body_tracking 的 angular.z (bbox 居中旋转可靠)
+  3. /cmd_vel 唯一发布者，消除多写冲突
+  4. 收到 /system_ready 信号后触发欢迎语播报
 
 状态机:
   VOICE_MANUAL → 语音运动命令直接发布 /cmd_vel，3s 超时自动 STOP
-  FOLLOWING   → 中继 /cmd_vel_body_track，语音运动命令暂停 3s 后恢复
-                "停止"/"关闭跟随" → VOICE_MANUAL
+  FOLLOWING   → 订阅 /locked_target 覆写线速度，
+                 /cmd_vel_body_track 提供角速度
+                 "停止"/"关闭跟随" → VOICE_MANUAL
 
-topic 拓扑:
-  voice_bridge 订阅 /cmd_vel_body_track (body_tracking 重映射)
-  voice_bridge 发布   /cmd_vel (唯一发布者)
-  voice_bridge 发布   /follow_active (Bool, VOICE_MANUAL=False)
+数据源:
+  感知权威 → perception_node (/locked_target, /locked_track_id)
+  跟踪策略 → body_tracking (/cmd_vel_body_track, angular 居中)
+  语音输入 → CI1302 UART (A5 FA 协议)
+  唯一输出 → /cmd_vel (Twist, 串口桥接消费)
 
 协议 V01843: A5 FA 00 [TYPE] [CMD_ID] 00 [CKSUM] FB (8 bytes)
   TYPE=0x81 CI1302→Host 识别结果, TYPE=0x82 Host→CI1302 触发播报
@@ -27,9 +30,10 @@ topic 拓扑:
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32, Int32
 import serial
 import time
+import math
 import enum
 
 
@@ -38,45 +42,60 @@ class State(enum.IntEnum):
     FOLLOWING = 1
 
 
-class VoiceBridge(Node):
+class MotionArbiter(Node):
 
     CMD_MAP = {
-        0x06: ('STOP',        (0.0,  0.0,  0.0)),   # 小车停止
-        0x07: ('FORWARD',     (0.5,  0.0,  0.0)),   # 小车前进
-        0x08: ('BACKWARD',    (-0.3,  0.0,  0.0)),  # 小车后退
-        0x09: ('TURN_LEFT',   (0.2,  0.0,  0.4)),   # 小车左转
-        0x0A: ('TURN_RIGHT',  (0.2,  0.0, -0.4)),   # 小车右转
-        0x0B: ('SPIN_LEFT',   (0.0,  0.0,  0.5)),   # 小车左旋
-        0x0C: ('SPIN_RIGHT',  (0.0,  0.0, -0.5)),   # 小车右旋
-        0x0D: ('FOLLOW_ON',   None),                 # 开启跟随
-        0x0E: ('FOLLOW_OFF',  None),                 # 关闭跟随
+        0x06: ('STOP',        (0.0,  0.0,  0.0)),
+        0x07: ('FORWARD',     (0.5,  0.0,  0.0)),
+        0x08: ('BACKWARD',    (-0.3,  0.0,  0.0)),
+        0x09: ('TURN_LEFT',   (0.2,  0.0,  0.4)),
+        0x0A: ('TURN_RIGHT',  (0.2,  0.0, -0.4)),
+        0x0B: ('SPIN_LEFT',   (0.0,  0.0,  0.5)),
+        0x0C: ('SPIN_RIGHT',  (0.0,  0.0, -0.5)),
+        0x0D: ('FOLLOW_ON',   None),
+        0x0E: ('FOLLOW_OFF',  None),
     }
 
     _STOP_VEL = (0.0, 0.0, 0.0)
     _FRAME_LEN = 8
-    _TYPE_FROM_CI1302 = 0x81   # CI1302 → Host (识别结果)
-    _TYPE_TO_CI1302   = 0x82   # Host → CI1302 (触发播报)
+    _TYPE_FROM_CI1302 = 0x81
+    _TYPE_TO_CI1302   = 0x82
     _TAIL = 0xFB
 
     def __init__(self):
-        super().__init__('voice_bridge')
+        super().__init__('motion_arbiter')
 
         port = self.declare_parameter('voice_port', '/dev/voice_module').value
         baud = self.declare_parameter('voice_baud', 115200).value
         self._action_duration = self.declare_parameter('action_duration_s', 3.0).value
+
+        # ── 跟随距离参数 ──
+        self._dist_far = self.declare_parameter('follow_dist_far_m', 2.5).value
+        self._dist_near = self.declare_parameter('follow_dist_near_m', 1.2).value
+        self._dist_min = self.declare_parameter('follow_dist_min_m', 0.7).value
+        self._vel_fast = self.declare_parameter('follow_vel_fast', 0.3).value
+        self._vel_slow = self.declare_parameter('follow_vel_slow', 0.1).value
+        self._vel_back = self.declare_parameter('follow_vel_back', -0.2).value
 
         self._state = State.VOICE_MANUAL
         self._last_cmd_ts = 0.0
         self._last_cmd_id = None
         self._body_track_msg = None
 
+        # ── LiDAR 锁目标距离 (来自 perception_node) ──
+        self._locked_dist = float('nan')
+        self._locked_track_id = -1
+
         self._pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self._follow_pub = self.create_publisher(Bool, '/follow_active', 10)
         self._sub_bt = self.create_subscription(
             Twist, '/cmd_vel_body_track', self._on_body_track, 10)
-        # 订阅系统就绪信号 (display_node 启动完成后发布)
         self._sub_ready = self.create_subscription(
             Bool, '/system_ready', self._on_system_ready, 10)
+        self._sub_target = self.create_subscription(
+            Float32, '/locked_target', self._on_locked_target, 10)
+        self._sub_locked_id = self.create_subscription(
+            Int32, '/locked_track_id', self._on_locked_track_id, 10)
 
         try:
             self._ser = serial.Serial(port, baud, timeout=0.1)
@@ -92,7 +111,7 @@ class VoiceBridge(Node):
 
         self._timer = self.create_timer(0.1, self._poll)
         self._follow_pub.publish(Bool(data=False))
-        self.get_logger().info('Voice bridge ready — VOICE_MANUAL mode')
+        self.get_logger().info('Motion arbiter ready — VOICE_MANUAL mode')
 
     def destroy_node(self):
         self._close_serial()
@@ -100,18 +119,16 @@ class VoiceBridge(Node):
 
     # ═════════════════════════════════════════════════════════════
     # 欢迎语
-    # ═════════════════════════════════════════════════════════════
 
     def _on_system_ready(self, msg: Bool):
         if self._welcome_played:
             return
         self._welcome_played = True
-        self._write_cmd(0x02)  # A5 FA 00 82 02 00 23 FB
+        self._write_cmd(0x02)
         self.get_logger().info('Welcome triggered — ALL SYSTEMS GO')
 
     # ═════════════════════════════════════════════════════════════
     # 串口
-    # ═════════════════════════════════════════════════════════════
 
     def _write_cmd(self, cmd_id):
         cksum = (0xA5 + 0xFA + 0x00 + self._TYPE_TO_CI1302 + cmd_id + 0x00) & 0xFF
@@ -136,17 +153,62 @@ class VoiceBridge(Node):
             self.get_logger().warn(f'Voice serial reconnect failed: {e}')
 
     # ═════════════════════════════════════════════════════════════
-    # body_tracking 中继
+    # LiDAR 距离覆写
+
+    def _on_locked_target(self, msg: Float32):
+        self._locked_dist = msg.data
+
+    def _on_locked_track_id(self, msg: Int32):
+        self._locked_track_id = msg.data
+
+    def _distance_to_linear_vel(self, dist_m):
+        """LiDAR 融合距离 → 线速度映射。
+
+        返回 None 表示无可用距离, 调用方应回退到 bbox 判定."""
+        if dist_m is None or not math.isfinite(dist_m) or dist_m <= 0:
+            return None
+        if dist_m < self._dist_min:
+            return self._vel_back   # 太近 → 后退
+        if dist_m < self._dist_near:
+            return 0.0              # 合适范围 → 停止
+        if dist_m < self._dist_far:
+            # 线性插值: dist_near→0, dist_far→vel_slow
+            ratio = (dist_m - self._dist_near) / (self._dist_far - self._dist_near)
+            return self._vel_slow * ratio
+        return self._vel_fast       # 远 → 全速前进
+
     # ═════════════════════════════════════════════════════════════
+    # body_tracking 中继 (角速度保留, 线速度由 LiDAR 覆写)
 
     def _on_body_track(self, msg: Twist):
         self._body_track_msg = msg
         if self._state == State.FOLLOWING and self._last_cmd_id is None:
-            self._pub.publish(msg)
+            self._publish_following_vel()
+
+    def _publish_following_vel(self):
+        """FOLLOWING 模式运动发布: LiDAR 距离覆写 linear.x, bbox 角速度保留."""
+        if self._body_track_msg is None:
+            return
+
+        out = Twist()
+        out.angular = self._body_track_msg.angular  # bbox 居中旋转可靠
+
+        vel = self._distance_to_linear_vel(self._locked_dist)
+        if vel is not None:
+            out.linear.x = float(vel)
+            self.get_logger().debug(
+                f'FOLLOW LiDAR: dist={self._locked_dist:.2f}m → linear.x={vel:.2f}')
+        else:
+            # 回退: 原样透传 body_tracking (bbox 判定)
+            out.linear = self._body_track_msg.linear
+            self.get_logger().debug(
+                'FOLLOW fallback: LiDAR unavailable, using bbox velocity',
+                throttle_duration_sec=3.0)
+
+        self._pub.publish(out)
 
     # ═════════════════════════════════════════════════════════════
     # 轮询
-    # ═════════════════════════════════════════════════════════════
 
     def _poll(self):
         now = self.get_clock().now().nanoseconds / 1e9
@@ -154,8 +216,7 @@ class VoiceBridge(Node):
         if self._last_cmd_id is not None and now - self._last_cmd_ts > self._action_duration:
             if self._state == State.FOLLOWING:
                 self.get_logger().info('Voice motion done, resuming follow relay')
-                if self._body_track_msg is not None:
-                    self._pub.publish(self._body_track_msg)
+                self._publish_following_vel()
             else:
                 self._publish_vel('AUTO_STOP', self._STOP_VEL)
             self._last_cmd_id = None
@@ -179,7 +240,6 @@ class VoiceBridge(Node):
 
     # ═════════════════════════════════════════════════════════════
     # 语音命令分发
-    # ═════════════════════════════════════════════════════════════
 
     def _on_voice(self, cmd_id):
         if cmd_id not in self.CMD_MAP:
@@ -233,7 +293,7 @@ class VoiceBridge(Node):
 
 def main():
     rclpy.init()
-    node = VoiceBridge()
+    node = MotionArbiter()
     try:
         rclpy.spin(node)
     finally:

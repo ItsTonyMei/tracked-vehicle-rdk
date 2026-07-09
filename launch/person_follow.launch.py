@@ -90,19 +90,19 @@ def generate_launch_description():
         arguments=['--ros-args', '--log-level', log_level],
         remappings=[('/cmd_vel', '/cmd_vel_body_track')])
 
-    # ── 8. cmd_vel → MotorCmd ─────────────────────────
+    # ── 8. 执行: /cmd_vel → MotorCmd (motor_bridge) ──
     bridge = IncludeLaunchDescription(PythonLaunchDescriptionSource([
         get_package_share_directory('tracked_vehicle'),
         '/launch/motor_bridge.launch.py']))
 
-    # ── 9. 屏显 ──────────────────────────────────────
-    display = Node(package='tracked_vehicle', executable='display_node',
-        name='display_node', output='screen',
+    # ── 9. 感知 (LiDAR融合 + 锁定 + 屏显) ────────────
+    perception = Node(package='tracked_vehicle', executable='perception_node',
+        name='perception_node', output='screen',
         parameters=[{'rotate_deg': 0}])
 
-    # ── 10. 语音控制 ──────────────────────────────────
-    voice = Node(package='tracked_vehicle', executable='voice_bridge',
-        name='voice_bridge', output='screen',
+    # ── 10. 运动仲裁 (语音 + FOLLOW距离覆写) ──────────
+    arbiter = Node(package='tracked_vehicle', executable='motion_arbiter',
+        name='motion_arbiter', output='screen',
         parameters=[{'voice_port': '/dev/voice_module',
                      'voice_baud': 115200,
                      'action_duration_s': 3.0}])
@@ -115,5 +115,5 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='warn',
                               description='ROS2 log level: debug, info, warn, error, fatal'),
-        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, display, voice, lidar,
+        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, perception, arbiter, lidar,
     ])
