@@ -169,7 +169,7 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 | 别跟我/关闭跟随 | 0x0E | `A5 FA 00 81 0E 00 2E FB` | `A5 FA 00 82 0E 00 2F FB` |
 
 > 每个 CMD 支持多个中文命令词 (如 停止=停车=停止前进).
-> voice_bridge 仅处理 CMD 0x06-0x0E (运动+跟随), 音量/唤醒由模块端固件管理.
+> motion_arbiter 仅处理 CMD 0x06-0x0E (运动+跟随), 音量/唤醒由模块端固件管理.
 > 完整固件及刷机工具见 `ci1302_firmware/sfw*/`.
 
 ### 固件
@@ -180,7 +180,7 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 
 ### 实现参考
 
-X5 端节点: `voice_bridge.py` (`_TYPE_FROM_CI1302=0x81`, `_TYPE_TO_CI1302=0x82`)
+X5 端节点: `motion_arbiter.py` (`_TYPE_FROM_CI1302=0x81`, `_TYPE_TO_CI1302=0x82`)
 
 ---
 

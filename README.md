@@ -14,7 +14,7 @@
 本项目将一套原基于 **ESP32 + OpenMV** 的 6WD 履带跟随车迁移至 **RDK X5 + STM32 ROS 主控板** 架构，实现：
 
 - **BPU 人体检测 + LiDAR-Camera EKF 融合测距** — mono2d_body_detection (BPU, ~60FPS) + T-mini Plus 2D LiDAR (10Hz) → 角度匹配 → 常速度 EKF → 公制距离
-- **语音仲裁跟随** — voice_bridge 状态机 (VOICE_MANUAL / FOLLOWING) 作为 /cmd_vel 唯一发布者, OK/Palm 手势锁定目标
+- **语音仲裁跟随** — motion_arbiter 状态机 (VOICE_MANUAL / FOLLOWING) 作为 /cmd_vel 唯一发布者, LiDAR 距离覆写线速度
 - **分层安全架构** — 遥控器 SBUS 直连 STM32 最高优先级, X5 指令次之, 2s 命令超时 + IWDG 硬件看门狗兜底
 - **多传感器融合** — LiDAR 测距、AI 语音交互 (CI1302 V01843/A5FA 协议)
 - **全 ROS2 Humble + TROS 生态** — 一键 `ros2 launch tracked_vehicle person_follow.launch.py` 启动 11 节点管线
@@ -161,10 +161,10 @@ tracked-vehicle-rdk/
 │   ├── resource/tracked_vehicle      #    ✅ 包标记文件
 │   └── tracked_vehicle/              #    核心 Python 模块
 │       ├── __init__.py               #    ✅ 包初始化
-│       ├── cmd_vel_bridge.py         #    ✅ /cmd_vel → MotorCmd 串口桥接 (CRC-8/自动重连)
-│       ├── display_node.py           #    ✅ HDMI 屏显 + 手势锁定 + 子系统启动监控
-│       ├── lidar_fusion.py           #    ✅ LiDAR-Camera 融合引擎 (聚类+角度匹配+EKF+速率解耦)
-│       └── voice_bridge.py           #    ✅ CI1302 语音 → /cmd_vel 仲裁 (A5FA/V01843/状态机)
+│       ├── motor_bridge.py           #    ✅ /cmd_vel → MotorCmd 串口桥接 (CRC-8/自动重连)
+│       ├── perception_node.py        #    ✅ 感知权威: LiDAR融合+手势锁定+HDMI屏显+系统监控
+│       ├── motion_arbiter.py         #    ✅ 运动仲裁: CI1302语音+FOLLOW距离覆写 (/cmd_vel唯一发布者)
+│       └── lidar_fusion.py           #    ✅ LiDAR-Camera 融合引擎 (聚类+角度匹配+EKF+速率解耦)
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理) ✅
 ├── ci1302_firmware/                   # 🎙️ CI1302 语音模块固件 ✅
@@ -204,10 +204,10 @@ tracked-vehicle-rdk/
 | L1   | **SBUS 遥控器优先**   | 遥控器直连 STM32，指令硬件级优先于 X5                                |
 | L1.5 | **IWDG 硬件看门狗**   | STM32 独立看门狗 4s 超时，主循环异常时自动复位 MCU → ESC 掉信号刹停 |
 | L2   | **命令超时刹停**      | X5 超过 2s 无新 MotorCmd → STM32 自动切中位 + 蜂鸣锁定              |
-| L3   | **X5 安全看门狗**     | cmd_vel_bridge: 60s 无 /cmd_vel → 发停止帧 (X5端, 独立于STM32端2s超时)                          |
+| L3   | **X5 安全看门狗**     | motor_bridge: 60s 无 /cmd_vel → 发停止帧 (X5端, 独立于STM32端2s超时)                          |
 | L4   | **电调物理保护**      | ZTW Seal G2 内置过流/过热/堵转保护                                   |
 | L5   | **视觉丢帧暂留**      | body_tracking: 丢失 ≤300 帧维持上一指令, 避免急刹                   |
-| L6   | **串口自动恢复**      | cmd_vel_bridge / voice_bridge: 写失败自动重连                        |
+| L6   | **串口自动恢复**      | motor_bridge / motion_arbiter: 写失败自动重连                        |
 | L7   | **LiDAR 紧急制动** ⬜ | 检测到障碍物 < 安全距离 → 强制减速/停止                             |
 
 ---
@@ -303,7 +303,7 @@ ros2 launch tracked_vehicle stereo_vision.launch.py
   - [X] 双目深度技术验证 (StereoNet @ 21FPS, 结论: 不可与检测并发)
   - [X] cmd_vel → MotorCmd 串口桥接
 - [X] M5：跟随系统
-  - [X] 人体跟随 (TROS body_tracking + voice_bridge 仲裁)
+  - [X] 人体跟随 (TROS body_tracking + motion_arbiter 仲裁)
   - [X] LiDAR-Camera 融合测距 (聚类+角度匹配+EKF, 纯 LiDAR 距离)
   - [X] 手势唤醒 (OK=锁定, Palm=解除) + 空间重识别
   - [X] HDMI 本地屏显 (1024×600, 系统监控 + CPU/BPU/MEM)
