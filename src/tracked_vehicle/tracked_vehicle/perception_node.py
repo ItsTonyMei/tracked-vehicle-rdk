@@ -657,6 +657,8 @@ class PerceptionNode(Node):
                 self.get_logger().warn(f'STARTUP DONE with {n_fail} timeout(s): {failed_names}')
 
         bar_y = h - 16
+        has_body_now = self._has_body(targets)
+        follow_on = self._follow_active
         if holding:
             remaining = max(0, self._lost_hold_s - (
                 self.get_clock().now().nanoseconds / 1e9 - self._lost_since))
