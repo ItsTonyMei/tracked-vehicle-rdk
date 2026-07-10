@@ -103,7 +103,7 @@ class PerceptionNode(Node):
         self._last_published_id = -2  # 强制首次发布
 
         self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
-        self.timer = self.create_timer(1.0/60.0, self.render)
+        self.timer = self.create_timer(1.0/30.0, self.render)
         self._start_ts = self.get_clock().now().nanoseconds / 1e9
 
     # ═══════════════════════════════════════════════════════════════

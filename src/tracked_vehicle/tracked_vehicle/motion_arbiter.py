@@ -109,7 +109,7 @@ class MotionArbiter(Node):
 
         self._welcome_played = False
 
-        self._timer = self.create_timer(0.1, self._poll)
+        self._timer = self.create_timer(0.2, self._poll)
         self._follow_pub.publish(Bool(data=False))
         self.get_logger().info('Motion arbiter ready — VOICE_MANUAL mode')
 
