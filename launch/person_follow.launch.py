@@ -54,11 +54,12 @@ def generate_launch_description():
             'codec_sub_topic': '/hbmem_img', 'codec_pub_topic': '/image',
         }.items())
 
-    # ── 4. 人体检测 ───────────────────────────────────
+    # ── 4. 人体检测 (Faster R-CNN @ 960x544, BPU, image_gap=2→30FPS) ──
     mono2d = Node(package='mono2d_body_detection', executable='mono2d_body_detection',
         output='screen',
         parameters=[{'model_file_name': 'config/multitask_body_head_face_hand_kps_960x544.hbm',
                      'model_type': 0,
+                     'image_gap': 2,
                      'ai_msg_pub_topic_name': '/hobot_mono2d_body_detection'}],
         arguments=['--ros-args', '--log-level', log_level])
 
@@ -84,7 +85,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{'activate_wakeup_gesture': 0,
                      'img_width': 960, 'img_height': 544,
-                     'track_serial_lost_num_thr': 300,
+                     'track_serial_lost_num_thr': 150,
                      'linear_velocity': 0.2, 'angular_velocity': 0.4,
                      'activate_robot_move_thr': 5}],
         arguments=['--ros-args', '--log-level', log_level],
