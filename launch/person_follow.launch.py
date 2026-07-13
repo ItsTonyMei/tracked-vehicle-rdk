@@ -9,10 +9,10 @@
   4. mono2d_body_det (人体检测)
   5. hand_lmk_det (手部关键点)
   6. hand_gesture_det (OK/Palm 手势)
-  7. body_tracking (跟随策略, cmd_vel → cmd_vel_body_track, voice_bridge 仲裁中继)
-  8. cmd_vel_bridge (/cmd_vel → MotorCmd → STM32)
-  9. display_node (HDMI屏显)
- 10. voice_bridge (CI1302 语音 → /cmd_vel 唯一发布者 + 状态机)
+  7. body_tracking (跟随策略 → /cmd_vel_body_track, motion_arbiter 仲裁中继)
+  8. motor_bridge (/cmd_vel → MotorCmd → STM32)
+  9. perception_node (LiDAR融合+手势锁定+HDMI屏显+系统监控)
+ 10. motion_arbiter (CI1302 语音 + FOLLOW距离覆写, /cmd_vel 唯一发布者)
  11. ydlidar_ros2_driver (T-mini Plus 激光雷达)
 
 控制层级: RC CH5 ARM → RC CH6 X5模式 → 语音手动(VOICE_MANUAL) → 跟随(FOLLOWING) → 手势锁定
@@ -78,8 +78,8 @@ def generate_launch_description():
                      'is_dynamic_gesture': False, 'time_interval_sec': 0.25}],
         arguments=['--ros-args', '--log-level', log_level])
 
-    # ── 7. 跟随策略 (由 voice_bridge 语音控制启停) ─────
-    # /cmd_vel → /cmd_vel_body_track, 交由 voice_bridge 仲裁中继
+    # ── 7. 跟随策略 (由 motion_arbiter 语音控制启停) ─────
+    # /cmd_vel → /cmd_vel_body_track, 交由 motion_arbiter 仲裁中继
     # activate_wakeup_gesture=0: 手势仅锁定/解锁目标, 不独立启动跟随
     body_track = Node(package='body_tracking', executable='body_tracking',
         output='screen',

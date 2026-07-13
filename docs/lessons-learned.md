@@ -97,7 +97,7 @@
 
 ### 17. 被锁者重识别 (Re-ID) — 空间匹配应对 ID 变化
 - 检测器内部 tracker 在人短暂消失后会分配新 track_id
-- display_node 的 HOLDING 保留了旧 ID 但人回来时拿到新 ID
+- perception_node (原 display_node) 的 HOLDING 保留了旧 ID 但人回来时拿到新 ID
 - 解决: 记录锁定者最后已知 body 中心点, HOLDING 期间对新 body 做 150px 距离匹配, 匹配成功则更新 `_locked_id`
 
 ## 系统精简
@@ -122,10 +122,12 @@
 
 ### 22. udev symlink 在启动早期可能未就绪
 - `/dev/stm32_board` symlink 由 udev 规则创建, 但服务启动可能早于 udev 触发
-- `cmd_vel_bridge` 因无法打开串口而静默崩溃
+- `motor_bridge` (原 cmd_vel_bridge) 因无法打开串口而静默崩溃
 - 临时方案: `ln -sf /dev/ttyUSB0 /dev/stm32_board` + 重启服务
 
 ## CI1302 语音模块
+
+> 当前节点: `motion_arbiter.py` (原 `voice_bridge.py`, v0.7 重构)
 
 ### 23. CI1302 开机自动播报 "这是西瓜皮属于湿垃圾" — init 命令 ID 冲突
 
@@ -190,12 +192,14 @@
 
 ### 27. 欢迎语触发 — 事件驱动 vs 盲等定时器
 
-- **初始方案**: `welcome_delay_s` 参数控制 voice_bridge 启动后延时 N 秒触发欢迎语
+> 当前节点: perception_node ↔ motion_arbiter (原 display_node / voice_bridge)
+
+- **初始方案**: `welcome_delay_s` 参数控制 motion_arbiter 启动后延时 N 秒触发欢迎语
 - **问题**: 欢迎语总是比屏幕 "ALL SYSTEMS GO" 早几秒或晚几秒:
-  - display_node 用硬编码 30s 判断系统就绪 (`_startup_done`)
-  - voice_bridge 用独立定时器, 两者无协调机制
+  - perception_node 用硬编码 30s 判断系统就绪 (`_startup_done`)
+  - motion_arbiter 用独立定时器, 两者无协调机制
   - 调整 `welcome_delay_s` 只能在特定启动速度下对齐, 冷启动/热启动时间不同时必然错位
-- **正确方案**: display_node 在 `_startup_done` 时 publish `/system_ready` (Bool), voice_bridge 订阅该 topic, 收到后立即触发欢迎语
+- **正确方案**: perception_node 在 `_startup_done` 时 publish `/system_ready` (Bool), motion_arbiter 订阅该 topic, 收到后立即触发欢迎语
 - **效果**: 欢迎语与 "ALL SYSTEMS GO" 精确同步 (<1s 偏差)
 - **教训**:
   - 多个节点之间的时序协调应使用 **topic 事件驱动**, 不要各自维护独立定时器

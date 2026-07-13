@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-07-13
+
+### Changed
+
+- **节点架构重构** — 感知/仲裁/执行三层分离:
+  - `display_node` 合并入 `perception_node` (LiDAR融合 + 手势锁定 + HDMI屏显 + 系统监控, 单一权威源)
+  - `voice_bridge` 重构为 `motion_arbiter` (/cmd_vel 唯一发布者, 状态机 VOICE_MANUAL↔FOLLOWING)
+  - `cmd_vel_bridge` 重命名为 `motor_bridge` (语义更精确, 职责仅为串口桥接)
+- **LiDAR 距离覆写** — motion_arbiter 在 FOLLOWING 模式下用 LiDAR EKF 融合距离覆写 linear.x, 保留 bbox angular.z
+- **渲染降频** — 60 → 30Hz (perception_node 屏显), 轮询 10 → 5Hz (motion_arbiter), 降低 CPU/BPU 占用
+- **跟踪丢失阈值** — `track_serial_lost_num_thr` 300 → 150 帧, 更快切 STOP
+- **mono2d image_gap** — 引入 image_gap=2, 检测帧率 60 → 30FPS
+
+### Fixed
+
+- perception_node `follow_on` 变量未定义 (NameError)
+
 ## [0.6.0] - 2026-07-03
 
 ### Changed

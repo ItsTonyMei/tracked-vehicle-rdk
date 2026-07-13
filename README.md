@@ -94,8 +94,8 @@ RDK X5 自主指令 (UART)    ▸  遥控器断开时生效
 │                     🧠 决策层 (Decision)                     │
 │   ┌──────────┐  ┌──────────┐  ┌──────────┐                 │
 │   │人体检测  │  │雷达融合  │  │语音仲裁  │                 │
-│   │mono2d    │  │lidar     │  │voice     │                 │
-│   │_body_det │  │_fusion   │  │_bridge   │                 │
+│   │mono2d    │  │lidar     │  │motion    │                 │
+│   │_body_det │  │_fusion   │  │_arbiter  │                 │
 │   └────┬─────┘  └────┬─────┘  └────┬─────┘                 │
 │        │ bbox       │ LiDAR-EKF   │ /cmd_vel 唯一发布者     │
 │        └───────┬───┘             │                        │
@@ -206,7 +206,7 @@ tracked-vehicle-rdk/
 | L2   | **命令超时刹停**      | X5 超过 2s 无新 MotorCmd → STM32 自动切中位 + 蜂鸣锁定              |
 | L3   | **X5 安全看门狗**     | motor_bridge: 60s 无 /cmd_vel → 发停止帧 (X5端, 独立于STM32端2s超时)                          |
 | L4   | **电调物理保护**      | ZTW Seal G2 内置过流/过热/堵转保护                                   |
-| L5   | **视觉丢帧暂留**      | body_tracking: 丢失 ≤300 帧维持上一指令, 避免急刹                   |
+| L5   | **视觉丢帧暂留**      | body_tracking: 丢失 ≤150 帧维持上一指令, 避免急刹                   |
 | L6   | **串口自动恢复**      | motor_bridge / motion_arbiter: 写失败自动重连                        |
 | L7   | **LiDAR 紧急制动** ⬜ | 检测到障碍物 < 安全距离 → 强制减速/停止                             |
 
