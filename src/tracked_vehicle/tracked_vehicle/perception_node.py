@@ -7,8 +7,8 @@
   - /system_ready    (Bool):    系统启动就绪信号
   - HDMI 屏显: 检测框 + 距离 + 系统状态栏 + 启动进度
 
-手势锁定状态机:
-  IDLE     — 无锁定, 等待 OK 手势
+手势锁定: /hobot_hand_gesture_detection 属性码 OK=11/Palm=5
+  IDLE     — 无锁定, OK 手势触发锁定
   LOCKED   — 已锁定, 另一人 OK 则切换, 被锁者 Palm 则解除
   HOLDING  — 被锁者短暂消失 (<5s), 维持锁定等待重现; 超时 → IDLE
 """
@@ -33,7 +33,7 @@ class PerceptionNode(Node):
         self.rotate_deg = self.declare_parameter('rotate_deg', 0).value
 
         # ── 可配置参数 ──
-        self._VOTE_THRESHOLD = self.declare_parameter('gesture_vote_threshold', 30).value
+        self._VOTE_THRESHOLD = self.declare_parameter('gesture_vote_threshold', 15).value
         self._ok_cooldown_s = self.declare_parameter('ok_cooldown_s', 3.0).value
         self._lost_hold_s = self.declare_parameter('lost_hold_s', 5.0).value
         self._empty_reset_s = self.declare_parameter('empty_reset_s', 10.0).value
@@ -64,7 +64,7 @@ class PerceptionNode(Node):
         self._startup_failed = set()
         self._startup_timeout_s = 25.0
 
-        # ── 手势投票 ──
+        # ── 手势投票 (OK=11, Palm=5) ──
         self._gesture_ts = 0.0
         self._gesture_votes = {}
 
@@ -72,6 +72,8 @@ class PerceptionNode(Node):
         self._locked_id = None
         self._lost_since = 0.0
         self._empty_since = 0.0
+        self._last_known_cx = None
+        self._last_known_cy = None
 
         # ── 渲染 ──
         self._flash = 0
@@ -100,7 +102,7 @@ class PerceptionNode(Node):
         # ── 下行发布 (运动仲裁者消费) ──
         self._locked_target_pub = self.create_publisher(Float32, '/locked_target', 10)
         self._locked_track_id_pub = self.create_publisher(Int32, '/locked_track_id', 10)
-        self._last_published_id = -2  # 强制首次发布
+        self._last_published_id = -2
 
         self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
         self.timer = self.create_timer(1.0/30.0, self.render)
@@ -142,10 +144,9 @@ class PerceptionNode(Node):
                 self.get_logger().warn(f'Startup TIMEOUT: {name} ({topic})')
 
     # ═══════════════════════════════════════════════════════════════
-    # 空间匹配工具
+    # 空间工具
 
     def _estimate_bbox_distance(self, rect, img_w):
-        """针孔模型距离估计 — 仅在不融合 LiDAR 时作为兜底."""
         if rect.width <= 0:
             return 0.0
         aspect = rect.width / max(rect.height, 1)
@@ -175,10 +176,12 @@ class PerceptionNode(Node):
                 seen.add(t.track_id)
         return ids
 
+    # ═══════════════════════════════════════════════════════════════
+    # 手势-人体空间匹配
+
     def _match_gesture_to_person(self, gesture_msg):
         if self._targets is None or gesture_msg is None:
             return None
-
         body_map = {}
         for bt in self._targets.targets:
             if bt.type != 'person':
@@ -188,7 +191,6 @@ class PerceptionNode(Node):
                 body_map[bt.track_id] = r
         if not body_map:
             return None
-
         for gt in gesture_msg.targets:
             for groi in gt.rois:
                 if groi.type != 'hand':
@@ -281,8 +283,7 @@ class PerceptionNode(Node):
             else:
                 if self._lost_since == 0.0:
                     self._lost_since = now
-
-                if hasattr(self, '_last_known_cx'):
+                if self._last_known_cx is not None:
                     matched_id, dist = self._find_nearest_body(
                         msg, self._last_known_cx, self._last_known_cy, 150.0)
                     if matched_id is not None:
@@ -290,7 +291,6 @@ class PerceptionNode(Node):
                             f'RE-ID #{self._locked_id} -> #{matched_id} (dist={dist:.0f}px)')
                         self._locked_id = matched_id
                         self._lost_since = 0.0
-
                 if self._lost_since > 0.0 and now - self._lost_since > self._lost_hold_s:
                     self.get_logger().info(
                         f'#{self._locked_id} 消失 >{self._lost_hold_s:.0f}s, 解除锁定')
@@ -298,6 +298,8 @@ class PerceptionNode(Node):
                     self._lost_since = 0.0
 
     def gesture_cb(self, msg: PerceptionTargets):
+        """属性码手势识别: OK=11 锁定, Palm=5 解除.
+        处理第一个非零手势后立即返回，防止后续 gesture=0 清零投票."""
         now = self.get_clock().now().nanoseconds / 1e9
 
         for t in msg.targets:
@@ -334,36 +336,34 @@ class PerceptionNode(Node):
     # 锁定状态机
 
     def _on_ok(self, now, gesture_msg):
+        """OK 手势 → 空间匹配 → 锁定."""
         if self._targets is None:
             return
         if now - self._last_det_ts > self._max_det_age_s:
             self.get_logger().warn('检测数据过期，忽略锁定')
             return
-
         matched_id = self._match_gesture_to_person(gesture_msg)
         if matched_id is None:
             self.get_logger().warn('OK 手势未能匹配到任何人')
             return
-
         if matched_id == self._locked_id:
             return
-
         old_id = self._locked_id
         self._locked_id = matched_id
         self._gesture_ts = now
         self._lost_since = 0.0
         self._flash = 15
         self._flash_color = (0, 0, 255)
-
         if old_id is None:
-            self.get_logger().info(f'LOCKED track_id={matched_id}')
+            self.get_logger().info(f'LOCKED track_id={matched_id} (OK)')
         else:
-            self.get_logger().info(f'SWITCHED #{old_id} -> #{matched_id}')
+            self.get_logger().info(f'SWITCHED #{old_id} -> #{matched_id} (OK)')
 
     def _on_palm(self, now):
+        """Palm 手势 → 解除锁定."""
         if self._locked_id is None:
             return
-        self.get_logger().info(f'UNLOCKED (was #{self._locked_id})')
+        self.get_logger().info(f'UNLOCKED #{self._locked_id} (Palm)')
         self._locked_id = None
         self._lost_since = 0.0
         self._gesture_ts = now
@@ -460,7 +460,7 @@ class PerceptionNode(Node):
             self._scan, self._targets, orig_w, now)
         holding = (self._locked_id is not None and self._lost_since > 0.0)
 
-        # ── 发布锁定目标距离 + track_id (运动仲裁者消费) ──
+        # ── 发布锁定目标距离 + track_id ──
         if self._locked_id is not None and self._locked_id in self._fused:
             dist_msg = Float32(data=float(self._fused[self._locked_id]['dist']))
             self._locked_target_pub.publish(dist_msg)
@@ -656,6 +656,7 @@ class PerceptionNode(Node):
                 failed_names = ', '.join(sorted(self._startup_failed))
                 self.get_logger().warn(f'STARTUP DONE with {n_fail} timeout(s): {failed_names}')
 
+        # ── 底部状态条 ──
         bar_y = h - 16
         has_body_now = self._has_body(targets)
         follow_on = self._follow_active

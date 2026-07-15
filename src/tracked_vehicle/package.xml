@@ -26,7 +26,6 @@
   <exec_depend>hand_gesture_detection</exec_depend>
   <exec_depend>body_tracking</exec_depend>
   <exec_depend>ydlidar_ros2_driver</exec_depend>
-  <exec_depend>hobot_stereonet</exec_depend>
 
 
   <test_depend>ament_flake8</test_depend>

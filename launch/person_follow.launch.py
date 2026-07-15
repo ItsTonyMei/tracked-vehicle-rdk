@@ -6,15 +6,16 @@
   1. hobot_shm (零拷贝)
   2. mipi_cam (960×544, rotation=90, SC132GS)
   3. jpeg_codec (NV12→JPEG)
-  4. mono2d_body_det (人体检测)
+  4. mono2d_body_det (人体+手部检测, 60FPS BPU)
   5. hand_lmk_det (手部关键点)
-  6. hand_gesture_det (OK/Palm 手势)
+  6. hand_gesture_det (OK/Palm 手势分类)
   7. body_tracking (跟随策略 → /cmd_vel_body_track, motion_arbiter 仲裁中继)
   8. motor_bridge (/cmd_vel → MotorCmd → STM32)
   9. perception_node (LiDAR融合+手势锁定+HDMI屏显+系统监控)
  10. motion_arbiter (CI1302 语音 + FOLLOW距离覆写, /cmd_vel 唯一发布者)
  11. ydlidar_ros2_driver (T-mini Plus 激光雷达)
 
+手势锁定: /hobot_hand_gesture_detection 属性码 OK=11 锁定, Palm=5 解除
 控制层级: RC CH5 ARM → RC CH6 X5模式 → 语音手动(VOICE_MANUAL) → 跟随(FOLLOWING) → 手势锁定
 用法: ros2 launch tracked_vehicle person_follow.launch.py
 """
@@ -54,12 +55,11 @@ def generate_launch_description():
             'codec_sub_topic': '/hbmem_img', 'codec_pub_topic': '/image',
         }.items())
 
-    # ── 4. 人体检测 (Faster R-CNN @ 960x544, BPU, image_gap=2→30FPS) ──
+    # ── 4. 人体检测 (Faster R-CNN @ 960x544, BPU, 60FPS) ──
     mono2d = Node(package='mono2d_body_detection', executable='mono2d_body_detection',
         output='screen',
         parameters=[{'model_file_name': 'config/multitask_body_head_face_hand_kps_960x544.hbm',
                      'model_type': 0,
-                     'image_gap': 2,
                      'ai_msg_pub_topic_name': '/hobot_mono2d_body_detection'}],
         arguments=['--ros-args', '--log-level', log_level])
 
@@ -70,7 +70,7 @@ def generate_launch_description():
                      'ai_msg_sub_topic_name': '/hobot_mono2d_body_detection'}],
         arguments=['--ros-args', '--log-level', log_level])
 
-    # ── 6. 手势识别 ───────────────────────────────────
+    # ── 6. 手势识别 (OK/Palm 分类) ────────────────────
     hand_gesture = Node(package='hand_gesture_detection', executable='hand_gesture_detection',
         output='screen',
         parameters=[{'ai_msg_pub_topic_name': '/hobot_hand_gesture_detection',
@@ -96,7 +96,7 @@ def generate_launch_description():
         get_package_share_directory('tracked_vehicle'),
         '/launch/motor_bridge.launch.py']))
 
-    # ── 9. 感知 (LiDAR融合 + 锁定 + 屏显) ────────────
+    # ── 9. 感知 (LiDAR融合 + 手势锁定 + 屏显) ────────
     perception = Node(package='tracked_vehicle', executable='perception_node',
         name='perception_node', output='screen',
         parameters=[{'rotate_deg': 0}])
