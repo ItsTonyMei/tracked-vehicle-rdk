@@ -38,7 +38,7 @@ motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, Point
-from std_msgs.msg import Bool, Float32, Int32
+from std_msgs.msg import Bool
 import serial
 import time
 import math
@@ -93,7 +93,6 @@ class MotionArbiter(Node):
         # ── LiDAR 锁目标 (来自 perception_node, Point: x=距离, y=侧向偏移) ──
         self._locked_dist = float('nan')
         self._locked_y = 0.0
-        self._locked_track_id = -1
 
         self._pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self._follow_pub = self.create_publisher(Bool, '/follow_active', 10)
@@ -103,8 +102,6 @@ class MotionArbiter(Node):
             Bool, '/system_ready', self._on_system_ready, 10)
         self._sub_target = self.create_subscription(
             Point, '/locked_target', self._on_locked_target, 10)
-        self._sub_locked_id = self.create_subscription(
-            Int32, '/locked_track_id', self._on_locked_track_id, 10)
         self._sub_emergency = self.create_subscription(
             Bool, '/emergency_stop', self._on_emergency_stop, 10)
         self._emergency_stop = False
@@ -171,9 +168,6 @@ class MotionArbiter(Node):
         self._locked_dist = msg.x
         self._locked_y = msg.y
 
-    def _on_locked_track_id(self, msg: Int32):
-        self._locked_track_id = msg.data
-
     def _on_emergency_stop(self, msg: Bool):
         if msg.data and not self._emergency_stop:
             self.get_logger().warn('EMERGENCY STOP: obstacle detected!')
@@ -211,12 +205,12 @@ class MotionArbiter(Node):
             return
 
         out = Twist()
-        out.angular = self._body_track_msg.angular  # bbox 居中旋转 (fallback)
 
         if self._emergency_stop:
-            self._pub.publish(out)  # all zeros
+            self._pub.publish(out)  # 纯零速, 禁止旋转
             return
 
+        out.angular = self._body_track_msg.angular  # bbox 居中旋转 (fallback)
         vel = self._distance_to_linear_vel(self._locked_dist)
         if vel is not None:
             out.linear.x = float(vel)

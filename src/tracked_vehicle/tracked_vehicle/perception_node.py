@@ -22,9 +22,9 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
-from sensor_msgs.msg import CompressedImage, LaserScan, CameraInfo
+from sensor_msgs.msg import CompressedImage, LaserScan
 from ai_msgs.msg import PerceptionTargets
-from std_msgs.msg import Bool, Float32, Int32
+from std_msgs.msg import Bool, Int32
 from geometry_msgs.msg import Point
 import cv2
 import numpy as np
@@ -55,7 +55,6 @@ class PerceptionNode(Node):
 
         # ── 启动状态 ──
         self._startup_done = False
-        self._start_ts = 0.0
         self._last_startup_check = 0.0
         self._SUBSYSTEMS = [
             ('/image',             'Camera'),
@@ -103,9 +102,6 @@ class PerceptionNode(Node):
         qos_scan = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT)
         self.sub_scan = self.create_subscription(
             LaserScan, '/scan', self.scan_cb, qos_scan)
-        self.sub_cam_info = self.create_subscription(
-            CameraInfo, '/camera_info', self._on_camera_info, 1)
-        self._cam_fx = None
         self._scan = None
         self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
         self._fused = {}
@@ -343,15 +339,6 @@ class PerceptionNode(Node):
 
     def scan_cb(self, msg: LaserScan):
         self._scan = msg
-
-    def _on_camera_info(self, msg: CameraInfo):
-        if self._cam_fx is None:
-            self._cam_fx = msg.k[0]
-            hfov = 2.0 * math.atan2(msg.width / 2.0, msg.k[0])
-            self._cam_hfov_deg = math.degrees(hfov)
-            self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
-            self.get_logger().info(
-                f'Camera FOV calibrated: {self._cam_hfov_deg:.1f}° (fx={self._cam_fx:.0f})')
 
     # ═══════════════════════════════════════════════════════════════
     # 锁定状态机
@@ -683,7 +670,7 @@ class PerceptionNode(Node):
             cv2.putText(frame, fail_text, (x + stat_w + 10, row_y + 6),
                         self._FONT, self._FONT_SCALE, (0, 0, 255), self._FONT_THICK)
 
-        if not self._startup_done and now - self._start_ts > 30.0:
+        if not self._startup_done and now - self._start_ts > self._startup_timeout_s + 5.0:
             self._startup_done = True
             self._ready_pub.publish(Bool(data=True))
             if n_fail > 0:

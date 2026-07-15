@@ -22,7 +22,6 @@ LiDAR-Camera 融合引擎 — 自适应聚类 + 躯干过滤 + 匈牙利匹配 +
 
 import math
 import numpy as np
-from collections import OrderedDict
 from scipy.optimize import linear_sum_assignment
 
 
@@ -39,12 +38,11 @@ class LidarClusterer:
         self.min_points = min_points
 
     @staticmethod
-    def _adaptive_thresh(r1, r2):
-        """两点平均距离 → 聚类阈值 (m)."""
-        avg = (r1 + r2) / 2.0
-        if avg < 1.0:   return 0.10
-        if avg < 3.0:   return 0.20
-        if avg < 6.0:   return 0.30
+    def _adaptive_thresh(avg_dist):
+        """平均距离 → 聚类阈值 (m)."""
+        if avg_dist < 1.0:   return 0.10
+        if avg_dist < 3.0:   return 0.20
+        if avg_dist < 6.0:   return 0.30
         return 0.40
 
     def cluster(self, ranges, angle_min, angle_inc):
@@ -63,7 +61,7 @@ class LidarClusterer:
             if current:
                 prev_a, prev_r, px, py = current[-1]
                 gap = math.sqrt((x - px)**2 + (y - py)**2)
-                if gap > self._adaptive_thresh(r, prev_r):
+                if gap > self._adaptive_thresh((r + prev_r) / 2.0):
                     if len(current) >= self.min_points:
                         clusters.append(self._summarize(current))
                     current = []
@@ -98,7 +96,7 @@ class LidarClusterer:
     def is_torso(c):
         """躯干几何过滤: 排除墙壁(太平/太宽)和柱子(太窄).
 
-        胸高度 LiDAR 扫描人体躯干: 弧宽 20-60cm, 曲率明显 (linearity < 0.95)."""
+        胸高度 LiDAR 扫描人体躯干: 弧宽 15-70cm, 曲率明显 (linearity < 0.97)."""
         if c['points'] < 3:
             return False
         w = c['width']
@@ -244,10 +242,11 @@ class FusionEngine:
     PERSON_STALE_MAX = 30   # 人物: 3s 超时 (容忍姿势变换导致短暂丢腿)
     OBS_STALE_MAX    = 5    # 障碍物: 0.5s 超时 (快速清理)
 
-    def __init__(self, cam_hfov_deg=70.0):
+    def __init__(self, cam_hfov_deg=72.0):
         self.clusterer = LidarClusterer()
         self.cam_hfov = cam_hfov_deg
-        self._tracks = OrderedDict()       # track_id → EKF
+        self._tracks = {}                  # track_id → EKF (Python 3.7+ ordered)
+        self._next_obs_id = 1000
         self._scan_ranges = None
         self._scan_angle_min = 0.0
         self._scan_angle_inc = 0.0
@@ -307,7 +306,6 @@ class FusionEngine:
 
         # ── 3. 数据关联 (角度+距离代价 + FOV 门控, 仅躯干聚类) ──
         pairs = match_camera_to_lidar(cam_list, torso_clusters, self.cam_hfov)
-        matched_cams = set(cam_list[c]['track_id'] for c, _ in pairs)
         # 反查: torso 索引 → 原始 cluster 角度 (用于障碍物去重)
         matched_angles = set(torso_clusters[l]['angle_mid'] for _, l in pairs)
 
@@ -337,7 +335,6 @@ class FusionEngine:
                     ekf.update(lx, ly)      # update() 内部重置 stale=0
 
         # ── 5. 未匹配的 LiDAR 聚类 → 纯障碍物 (角度匹配持久 ID) ──
-        self._next_obs_id = getattr(self, '_next_obs_id', 1000)
         for j, lc in enumerate(clusters):
             if lc['angle_mid'] in matched_angles:
                 continue
@@ -386,19 +383,8 @@ class FusionEngine:
         result = {}
         for tid, ekf in self._tracks.items():
             s = ekf.state
-            dist = math.hypot(s['x'], s['y'])
-            source = 'fused' if tid in matched_cams else 'lidar_only'
-
-            result[tid] = {'dist': dist, 'x': s['x'], 'y': s['y'],
-                          'vx': s['vx'], 'vy': s['vy'],
-                          'speed': s['speed'], 'source': source}
+            result[tid] = {'dist': math.hypot(s['x'], s['y']),
+                          'x': s['x'], 'y': s['y']}
 
         self._cached_result = result
         return result
-
-    def get_distance(self, track_id):
-        """便捷方法: 返回融合距离 (米) 或 None."""
-        if track_id in self._tracks:
-            s = self._tracks[track_id].state
-            return math.hypot(s['x'], s['y'])
-        return None

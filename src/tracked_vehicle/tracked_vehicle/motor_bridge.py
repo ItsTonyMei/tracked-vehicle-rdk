@@ -43,10 +43,8 @@ class MotorBridge(Node):
         self.pwm_min = 1000
         self.pwm_max = 2000
 
-        self._ser_open = False
         try:
             self.ser = serial.Serial(port, baud, timeout=0.1)
-            self._ser_open = True
             self.get_logger().info(f'串口已打开: {port} @ {baud}')
         except serial.SerialException as e:
             self.get_logger().fatal(f'无法打开串口 {port}: {e}')
@@ -59,7 +57,7 @@ class MotorBridge(Node):
         self.timer = self.create_timer(min(5.0, self.timeout / 10.0), self.watchdog)
 
     def destroy_node(self):
-        if getattr(self, '_ser_open', False):
+        if hasattr(self, 'ser') and self.ser.is_open:
             try:
                 self.ser.close()
             except Exception:
