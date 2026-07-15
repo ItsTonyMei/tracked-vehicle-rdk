@@ -15,9 +15,10 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
-from sensor_msgs.msg import CompressedImage, LaserScan
+from sensor_msgs.msg import CompressedImage, LaserScan, CameraInfo
 from ai_msgs.msg import PerceptionTargets
 from std_msgs.msg import Bool, Float32, Int32
+from geometry_msgs.msg import Point
 import cv2
 import numpy as np
 import math
@@ -95,13 +96,17 @@ class PerceptionNode(Node):
         qos_scan = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT)
         self.sub_scan = self.create_subscription(
             LaserScan, '/scan', self.scan_cb, qos_scan)
+        self.sub_cam_info = self.create_subscription(
+            CameraInfo, '/camera_info', self._on_camera_info, 1)
+        self._cam_fx = None
         self._scan = None
         self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
         self._fused = {}
 
         # ── 下行发布 (运动仲裁者消费) ──
-        self._locked_target_pub = self.create_publisher(Float32, '/locked_target', 10)
+        self._locked_target_pub = self.create_publisher(Point, '/locked_target', 10)
         self._locked_track_id_pub = self.create_publisher(Int32, '/locked_track_id', 10)
+        self._emergency_stop_pub = self.create_publisher(Bool, '/emergency_stop', 10)
         self._last_published_id = -2
 
         self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
@@ -332,6 +337,15 @@ class PerceptionNode(Node):
     def scan_cb(self, msg: LaserScan):
         self._scan = msg
 
+    def _on_camera_info(self, msg: CameraInfo):
+        if self._cam_fx is None:
+            self._cam_fx = msg.k[0]
+            hfov = 2.0 * math.atan2(msg.width / 2.0, msg.k[0])
+            self._cam_hfov_deg = math.degrees(hfov)
+            self._fusion = FusionEngine(cam_hfov_deg=self._cam_hfov_deg)
+            self.get_logger().info(
+                f'Camera FOV calibrated: {self._cam_hfov_deg:.1f}° (fx={self._cam_fx:.0f})')
+
     # ═══════════════════════════════════════════════════════════════
     # 锁定状态机
 
@@ -460,17 +474,30 @@ class PerceptionNode(Node):
             self._scan, self._targets, orig_w, now)
         holding = (self._locked_id is not None and self._lost_since > 0.0)
 
-        # ── 发布锁定目标距离 + track_id ──
+        # ── 发布锁定目标距离 + 侧向偏移 + track_id ──
         if self._locked_id is not None and self._locked_id in self._fused:
-            dist_msg = Float32(data=float(self._fused[self._locked_id]['dist']))
-            self._locked_target_pub.publish(dist_msg)
+            fd = self._fused[self._locked_id]
+            self._locked_target_pub.publish(
+                Point(x=float(fd['dist']), y=float(fd.get('y', 0.0)), z=0.0))
         else:
-            self._locked_target_pub.publish(Float32(data=float('nan')))
+            self._locked_target_pub.publish(Point(x=float('nan'), y=0.0, z=0.0))
 
         if self._locked_id != self._last_published_id:
             self._locked_track_id_pub.publish(
                 Int32(data=self._locked_id if self._locked_id is not None else -1))
             self._last_published_id = self._locked_id
+
+        # ── 障碍物紧急停止检测 ──
+        emergency = False
+        for tid, fd in self._fused.items():
+            if tid >= 0:
+                continue
+            if fd['dist'] < 0.5:
+                obs_angle = abs(math.degrees(math.atan2(fd['y'], fd['x'])))
+                if obs_angle < 15.0:
+                    emergency = True
+                    break
+        self._emergency_stop_pub.publish(Bool(data=emergency))
 
         if targets is not None:
             for t in targets.targets:

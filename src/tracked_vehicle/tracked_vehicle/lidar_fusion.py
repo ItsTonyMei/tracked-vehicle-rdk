@@ -60,16 +60,14 @@ class LidarClusterer:
 
     @staticmethod
     def _summarize(pts):
-        angles = [p[0] for p in pts]
-        ranges = [p[1] for p in pts]
-        valid = [r for r in ranges if r > 0.05]
-        if not valid:
-            valid = ranges
+        xs = [p[2] for p in pts]
+        ys = [p[3] for p in pts]
+        cx, cy = float(np.mean(xs)), float(np.mean(ys))
         return {
-            'angle_mid': (angles[0] + angles[-1]) / 2.0,
-            'angle_span': abs(angles[-1] - angles[0]),
-            'dist_mean': float(np.mean(valid)),
-            'dist_min': float(np.min(valid)),
+            'angle_mid': (pts[0][0] + pts[-1][0]) / 2.0,
+            'angle_span': abs(pts[-1][0] - pts[0][0]),
+            'dist_mean': math.hypot(cx, cy),
+            'dist_min': float(np.min([p[1] for p in pts])),
             'points': len(pts),
         }
 
@@ -78,7 +76,7 @@ class LidarClusterer:
 # 数据关联 (角度 + 对数距离代价)
 # ═══════════════════════════════════════════════════════════════
 
-def _greedy_match(cost_matrix, max_cost=1.2):
+def _greedy_match(cost_matrix, max_cost):
     """贪心分配 (n ≤ 10, 无需 scipy)。返回 [(cam_idx, lid_idx), ...]."""
     n_cam, n_lid = cost_matrix.shape
     if n_cam == 0 or n_lid == 0:
@@ -150,7 +148,7 @@ class TargetEKF:
         self.P = np.eye(4) * 0.1
         self.last_t = timestamp
         self.stale = 0
-        self.Q = np.diag([0.05, 0.05, 0.2, 0.2])
+        self.Q = np.diag([0.5, 0.5, 2.0, 2.0])  # ×dt 缩放后等效连续谱密度
         self.R = np.diag([0.001, 0.001])      # σ ≈ 3.2cm (was 0.04=20cm)
         self.H = np.array([[1, 0, 0, 0],
                            [0, 1, 0, 0]], dtype=np.float64)
@@ -166,7 +164,7 @@ class TargetEKF:
                       [0, 0, 1,  0],
                       [0, 0, 0,  1]], dtype=np.float64)
         self.x = F @ self.x
-        self.P = F @ self.P @ F.T + self.Q
+        self.P = F @ self.P @ F.T + self.Q * dt
 
     def update(self, z_x, z_y):
         z = np.array([z_x, z_y])
@@ -304,7 +302,8 @@ class FusionEngine:
                 if jump < MAX_DIST_JUMP:
                     ekf.update(lx, ly)      # update() 内部重置 stale=0
 
-        # ── 5. 未匹配的 LiDAR 聚类 → 纯障碍物 ──
+        # ── 5. 未匹配的 LiDAR 聚类 → 纯障碍物 (角度匹配持久 ID) ──
+        self._next_obs_id = getattr(self, '_next_obs_id', 1000)
         for j, lc in enumerate(clusters):
             if j in matched_lids:
                 continue
@@ -312,16 +311,33 @@ class FusionEngine:
             d = lc['dist_mean']
             lx = math.cos(a_rad) * d
             ly = math.sin(a_rad) * d
-            obs_id = -1000 - j
-            if obs_id not in self._tracks:
+
+            # 角度匹配: 在现有障碍物 track 中找最近角度 (< 5°)
+            best_obs_id, best_obs_angle = None, float('inf')
+            for oid, ekf in self._tracks.items():
+                if oid >= 0:
+                    continue
+                oa = math.atan2(ekf.x[1], ekf.x[0])
+                angle_diff = abs(a_rad - oa)
+                if angle_diff < math.radians(5) and angle_diff < best_obs_angle:
+                    best_obs_id, best_obs_angle = oid, angle_diff
+
+            if best_obs_id is not None:
+                obs_id = best_obs_id
+                ekf = self._tracks[obs_id]
+                cur = ekf.state
+                jump = math.hypot(lx - cur['x'], ly - cur['y'])
+                if jump < MAX_DIST_JUMP:
+                    ekf.update(lx, ly)
+            else:
                 obs_tracks = [oid for oid in self._tracks if oid < 0]
                 if len(obs_tracks) >= self.MAX_OBS_TRACKS:
                     oldest = max(obs_tracks, key=lambda oid: self._tracks[oid].stale)
                     del self._tracks[oldest]
+                obs_id = -self._next_obs_id
+                self._next_obs_id += 1
                 ekf = TargetEKF(lx, ly, timestamp)
                 self._tracks[obs_id] = ekf
-            else:
-                self._tracks[obs_id].update(lx, ly)
 
         # ── 6. 清理过期 track (人物/障碍物不同超时) ──
         stale_ids = []
@@ -337,7 +353,7 @@ class FusionEngine:
         for tid, ekf in self._tracks.items():
             s = ekf.state
             dist = math.hypot(s['x'], s['y'])
-            source = 'lidar' if tid in matched_cams else 'bbox'
+            source = 'fused' if tid in matched_cams else 'lidar_only'
 
             result[tid] = {'dist': dist, 'x': s['x'], 'y': s['y'],
                           'vx': s['vx'], 'vy': s['vy'],

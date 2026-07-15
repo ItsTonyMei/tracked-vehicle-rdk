@@ -29,7 +29,7 @@ motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Point
 from std_msgs.msg import Bool, Float32, Int32
 import serial
 import time
@@ -70,20 +70,21 @@ class MotionArbiter(Node):
         self._action_duration = self.declare_parameter('action_duration_s', 3.0).value
 
         # ── 跟随距离参数 ──
-        self._dist_far = self.declare_parameter('follow_dist_far_m', 2.5).value
+        self._dist_far = self.declare_parameter('follow_dist_far_m', 3.0).value
         self._dist_near = self.declare_parameter('follow_dist_near_m', 1.2).value
         self._dist_min = self.declare_parameter('follow_dist_min_m', 0.7).value
-        self._vel_fast = self.declare_parameter('follow_vel_fast', 0.3).value
-        self._vel_slow = self.declare_parameter('follow_vel_slow', 0.1).value
-        self._vel_back = self.declare_parameter('follow_vel_back', -0.2).value
+        self._vel_fast = self.declare_parameter('follow_vel_fast', 0.8).value
+        self._vel_slow = self.declare_parameter('follow_vel_slow', 0.2).value
+        self._vel_back = self.declare_parameter('follow_vel_back', -0.3).value
 
         self._state = State.VOICE_MANUAL
         self._last_cmd_ts = 0.0
         self._last_cmd_id = None
         self._body_track_msg = None
 
-        # ── LiDAR 锁目标距离 (来自 perception_node) ──
+        # ── LiDAR 锁目标 (来自 perception_node, Point: x=距离, y=侧向偏移) ──
         self._locked_dist = float('nan')
+        self._locked_y = 0.0
         self._locked_track_id = -1
 
         self._pub = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -93,9 +94,12 @@ class MotionArbiter(Node):
         self._sub_ready = self.create_subscription(
             Bool, '/system_ready', self._on_system_ready, 10)
         self._sub_target = self.create_subscription(
-            Float32, '/locked_target', self._on_locked_target, 10)
+            Point, '/locked_target', self._on_locked_target, 10)
         self._sub_locked_id = self.create_subscription(
             Int32, '/locked_track_id', self._on_locked_track_id, 10)
+        self._sub_emergency = self.create_subscription(
+            Bool, '/emergency_stop', self._on_emergency_stop, 10)
+        self._emergency_stop = False
 
         try:
             self._ser = serial.Serial(port, baud, timeout=0.1)
@@ -155,27 +159,35 @@ class MotionArbiter(Node):
     # ═════════════════════════════════════════════════════════════
     # LiDAR 距离覆写
 
-    def _on_locked_target(self, msg: Float32):
-        self._locked_dist = msg.data
+    def _on_locked_target(self, msg: Point):
+        self._locked_dist = msg.x
+        self._locked_y = msg.y
 
     def _on_locked_track_id(self, msg: Int32):
         self._locked_track_id = msg.data
 
+    def _on_emergency_stop(self, msg: Bool):
+        if msg.data and not self._emergency_stop:
+            self.get_logger().warn('EMERGENCY STOP: obstacle detected!')
+        self._emergency_stop = msg.data
+
     def _distance_to_linear_vel(self, dist_m):
-        """LiDAR 融合距离 → 线速度映射。
+        """LiDAR 融合距离 → 线速度 (连续映射, 无跳变).
 
         返回 None 表示无可用距离, 调用方应回退到 bbox 判定."""
         if dist_m is None or not math.isfinite(dist_m) or dist_m <= 0:
             return None
-        if dist_m < self._dist_min:
-            return self._vel_back   # 太近 → 后退
-        if dist_m < self._dist_near:
-            return 0.0              # 合适范围 → 停止
-        if dist_m < self._dist_far:
-            # 线性插值: dist_near→0, dist_far→vel_slow
+        if dist_m < self._dist_min:              # < 0.7m
+            return self._vel_back                # 后退
+        if dist_m < self._dist_min + 0.15:       # 0.70-0.85m: 过渡区
+            ratio = (dist_m - self._dist_min) / 0.15
+            return self._vel_back * (1.0 - ratio)  # 后退 → 停止
+        if dist_m < self._dist_near:              # 0.85-1.2m: 合适范围
+            return 0.0
+        if dist_m < self._dist_far:               # 1.2-3.0m: 加速区
             ratio = (dist_m - self._dist_near) / (self._dist_far - self._dist_near)
-            return self._vel_slow * ratio
-        return self._vel_fast       # 远 → 全速前进
+            return self._vel_slow * ratio + (self._vel_fast - self._vel_slow) * ratio * ratio
+        return self._vel_fast                     # ≥ 3.0m: 全速
 
     # ═════════════════════════════════════════════════════════════
     # body_tracking 中继 (角速度保留, 线速度由 LiDAR 覆写)
@@ -186,24 +198,25 @@ class MotionArbiter(Node):
             self._publish_following_vel()
 
     def _publish_following_vel(self):
-        """FOLLOWING 模式运动发布: LiDAR 距离覆写 linear.x, bbox 角速度保留."""
+        """FOLLOWING 模式运动发布: LiDAR 距离覆写 linear.x + 侧向偏移驱动转向."""
         if self._body_track_msg is None:
             return
 
         out = Twist()
-        out.angular = self._body_track_msg.angular  # bbox 居中旋转可靠
+        out.angular = self._body_track_msg.angular  # bbox 居中旋转 (fallback)
+
+        if self._emergency_stop:
+            self._pub.publish(out)  # all zeros
+            return
 
         vel = self._distance_to_linear_vel(self._locked_dist)
         if vel is not None:
             out.linear.x = float(vel)
-            self.get_logger().debug(
-                f'FOLLOW LiDAR: dist={self._locked_dist:.2f}m → linear.x={vel:.2f}')
+            if math.isfinite(self._locked_y):
+                k_angular = 0.5  # rad/s per meter of lateral error
+                out.angular.z = -k_angular * self._locked_y
         else:
-            # 回退: 原样透传 body_tracking (bbox 判定)
             out.linear = self._body_track_msg.linear
-            self.get_logger().debug(
-                'FOLLOW fallback: LiDAR unavailable, using bbox velocity',
-                throttle_duration_sec=3.0)
 
         self._pub.publish(out)
 

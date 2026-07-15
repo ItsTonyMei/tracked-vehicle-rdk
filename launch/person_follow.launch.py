@@ -106,15 +106,24 @@ def generate_launch_description():
         name='motion_arbiter', output='screen',
         parameters=[{'voice_port': '/dev/voice_module',
                      'voice_baud': 115200,
-                     'action_duration_s': 3.0}])
+                     'action_duration_s': 3.0,
+                     'follow_vel_fast': 0.8,
+                     'follow_vel_back': -0.3,
+                     'follow_dist_far_m': 3.0}])
 
     # ── 11. LiDAR ──────────────────────────────────────
     lidar = IncludeLaunchDescription(PythonLaunchDescriptionSource([
         get_package_share_directory('ydlidar_ros2_driver'),
         '/launch/ydlidar_launch.py']))
 
+    # ── 12. Camera-LiDAR 外参 (静态 TF) ──────────────
+    cam_tf = Node(package='tf2_ros', executable='static_transform_publisher',
+        arguments=['0.05', '0', '0.20', '0', '0', '0', 'base_link', 'camera_frame'],
+        name='camera_tf')
+
     return LaunchDescription([
         DeclareLaunchArgument('log_level', default_value='warn',
                               description='ROS2 log level: debug, info, warn, error, fatal'),
-        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, perception, arbiter, lidar,
+        shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, perception, arbiter,
+        lidar, cam_tf,
     ])
