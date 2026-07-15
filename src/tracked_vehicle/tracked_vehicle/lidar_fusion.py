@@ -74,13 +74,36 @@ class LidarClusterer:
         xs = [p[2] for p in pts]
         ys = [p[3] for p in pts]
         cx, cy = float(np.mean(xs)), float(np.mean(ys))
+        span = abs(pts[-1][0] - pts[0][0])
+        dist_mean = math.hypot(cx, cy)
+        width = span * dist_mean  # 弧宽 (m), 小角度近似
+        # 曲率: 弦长/弧长, 平坦墙壁 ~1.0, 弧形躯干 <0.95
+        chord = math.hypot(xs[-1] - xs[0], ys[-1] - ys[0])
+        path = sum(math.hypot(xs[i+1]-xs[i], ys[i+1]-ys[i]) for i in range(len(xs)-1))
+        linearity = chord / path if path > 0.01 else 1.0
         return {
             'angle_mid': (pts[0][0] + pts[-1][0]) / 2.0,
-            'angle_span': abs(pts[-1][0] - pts[0][0]),
-            'dist_mean': math.hypot(cx, cy),
+            'angle_span': span,
+            'dist_mean': dist_mean,
             'dist_min': float(np.min([p[1] for p in pts])),
             'points': len(pts),
+            'width': width,
+            'linearity': linearity,
         }
+
+    @staticmethod
+    def is_torso(c):
+        """躯干几何过滤: 排除墙壁(太平/太宽)和柱子(太窄).
+
+        胸高度 LiDAR 扫描人体躯干: 弧宽 20-60cm, 曲率明显 (linearity < 0.95)."""
+        if c['points'] < 3:
+            return False
+        w = c['width']
+        if w < 0.15 or w > 0.70:
+            return False
+        if c['points'] >= 5 and c['linearity'] > 0.97:
+            return False  # 近乎平坦 → 墙壁
+        return True
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -259,6 +282,8 @@ class FusionEngine:
         # ── 1. LiDAR 聚类 (仅新扫描帧) ──
         clusters = self.clusterer.cluster(
             self._scan_ranges, self._scan_angle_min, self._scan_angle_inc)
+        # 躯干过滤: 仅对匹配池过滤, 障碍物保留完整聚类
+        torso_clusters = [c for c in clusters if LidarClusterer.is_torso(c)]
 
         # ── 2. 相机 bbox → 角度投影 ──
         cam_list = []
@@ -277,10 +302,11 @@ class FusionEngine:
                     'angle_span_deg': angle_span_deg,
                 })
 
-        # ── 3. 数据关联 (角度+距离代价 + FOV 门控) ──
-        pairs = match_camera_to_lidar(cam_list, clusters, self.cam_hfov)
+        # ── 3. 数据关联 (角度+距离代价 + FOV 门控, 仅躯干聚类) ──
+        pairs = match_camera_to_lidar(cam_list, torso_clusters, self.cam_hfov)
         matched_cams = set(cam_list[c]['track_id'] for c, _ in pairs)
-        matched_lids = set(l for _, l in pairs)
+        # 反查: torso 索引 → 原始 cluster 角度 (用于障碍物去重)
+        matched_angles = set(torso_clusters[l]['angle_mid'] for _, l in pairs)
 
         # ── 4. EKF 更新匹配对 ──
         # 统一递增 stale: 匹配成功的由 update() 重置为 0
@@ -290,7 +316,7 @@ class FusionEngine:
         MAX_DIST_JUMP = 0.5  # 米, 0.1s 内人最多移动 ~0.2m; 0.5m 过滤误匹配
         for ci, lj in pairs:
             ct = cam_list[ci]
-            lc = clusters[lj]
+            lc = torso_clusters[lj]
             tid = ct['track_id']
             a_rad = lc['angle_mid']
             d = lc['dist_mean']
@@ -310,7 +336,7 @@ class FusionEngine:
         # ── 5. 未匹配的 LiDAR 聚类 → 纯障碍物 (角度匹配持久 ID) ──
         self._next_obs_id = getattr(self, '_next_obs_id', 1000)
         for j, lc in enumerate(clusters):
-            if j in matched_lids:
+            if lc['angle_mid'] in matched_angles:
                 continue
             a_rad = lc['angle_mid']
             d = lc['dist_mean']
