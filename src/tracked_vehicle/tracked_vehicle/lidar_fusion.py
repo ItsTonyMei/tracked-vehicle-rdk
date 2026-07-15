@@ -3,8 +3,8 @@
 LiDAR-Camera 融合引擎 — 聚类 + 数据关联 + EKF 状态估计
 
 管线 (以 LiDAR 10Hz 速率驱动):
-  /scan (YDLidar T-mini Plus: 360°, 10Hz, ~900pts, 0.4°/pt) → Euclidean 聚类 → LiDAR 目标
-  camera bboxes (SC132GS: 72° HFOV @ 960×544)                → 角度投影      → Camera 目标
+  /scan (YDLidar T-mini Plus: 360°, 10Hz, 430pts fixed-res, 0.84°/pt) → Euclidean 聚类 → LiDAR 目标
+  camera bboxes (SC132GS: 72° HFOV @ 960×544)                         → 角度投影      → Camera 目标
   ── 贪心匹配 (角度+距离) ──→ EKF 更新/预测 ──→ 融合距离 + 速度
 
 渲染帧 (60Hz) 仅做 EKF predict, 聚类+匹配+更新仅在 LiDAR 新帧到达时执行,
