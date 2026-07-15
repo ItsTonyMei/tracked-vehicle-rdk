@@ -39,7 +39,7 @@ class PerceptionNode(Node):
         self._lost_hold_s = self.declare_parameter('lost_hold_s', 5.0).value
         self._empty_reset_s = self.declare_parameter('empty_reset_s', 10.0).value
         self._max_det_age_s = self.declare_parameter('max_det_age_s', 0.5).value
-        self._cam_hfov_deg = self.declare_parameter('cam_hfov_deg', 70.0).value
+        self._cam_hfov_deg = self.declare_parameter('cam_hfov_deg', 72.0).value  # SC132GS rotation=90 → 72°
 
         # ── 帧数据 ──
         self._frame = None

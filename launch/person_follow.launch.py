@@ -99,7 +99,8 @@ def generate_launch_description():
     # ── 9. 感知 (LiDAR融合 + 手势锁定 + 屏显) ────────
     perception = Node(package='tracked_vehicle', executable='perception_node',
         name='perception_node', output='screen',
-        parameters=[{'rotate_deg': 0}])
+        parameters=[{'rotate_deg': 0,
+                     'cam_hfov_deg': 72.0}])
 
     # ── 10. 运动仲裁 (语音 + FOLLOW距离覆写) ──────────
     arbiter = Node(package='tracked_vehicle', executable='motion_arbiter',
