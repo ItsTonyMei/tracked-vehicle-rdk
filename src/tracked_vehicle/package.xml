@@ -17,6 +17,7 @@
   <depend>python3-serial</depend>
   <depend>python3-opencv</depend>
   <depend>python3-numpy</depend>
+  <depend>python3-scipy</depend>
 
   <exec_depend>hobot_shm</exec_depend>
   <exec_depend>mipi_cam</exec_depend>
