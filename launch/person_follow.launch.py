@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-语音控制人体跟随 launch (GS130W rotation=90 适配版)
+语音控制人体跟随 launch (GS130W rotation=90 + LiDAR 融合版)
+
+传感器:
+  Camera: GS130W SC132GS, 72deg HFOV, f=1.75mm 广角, rotation=90 -> 960x544 @ 60fps
+  LiDAR:  YDLidar T-mini Plus, 360deg @ 10Hz, 430pts, 胸高度 ~150cm
 
 流水线:
-  1. hobot_shm (零拷贝)
-  2. mipi_cam (960×544, rotation=90, SC132GS)
-  3. jpeg_codec (NV12→JPEG)
-  4. mono2d_body_det (人体+手部检测, 60FPS BPU)
-  5. hand_lmk_det (手部关键点)
-  6. hand_gesture_det (OK/Palm 手势分类)
-  7. body_tracking (跟随策略 → /cmd_vel_body_track, motion_arbiter 仲裁中继)
-  8. motor_bridge (/cmd_vel → MotorCmd → STM32)
-  9. perception_node (LiDAR融合+手势锁定+HDMI屏显+系统监控)
- 10. motion_arbiter (CI1302 语音 + FOLLOW距离覆写, /cmd_vel 唯一发布者)
- 11. ydlidar_ros2_driver (T-mini Plus 激光雷达)
+  1. hobot_shm (零拷贝共享内存)
+  2. mipi_cam (960x544, rotation=90, GDC, SC132GS calibration)
+  3. jpeg_codec (NV12->JPEG, 给 HDMI 屏显)
+  4. mono2d_body_det (人体+手部检测, 60FPS BPU, multitask model)
+  5. hand_lmk_det (手部 21 点关键点)
+  6. hand_gesture_det (OK/Palm 手势分类, gestureDet model)
+  7. body_tracking (跟随策略 -> /cmd_vel_body_track, motion_arbiter 仲裁中继)
+  8. motor_bridge (/cmd_vel -> MotorCmd [0xAA][th][th][st][st][CRC8] -> STM32 UART)
+  9. perception_node (LiDAR-Camera 融合 + 手势锁定 + 急停 + HDMI 屏显)
+ 10. motion_arbiter (/cmd_vel 唯一发布者, 语音 + LiDAR 距离/侧向 + 急停)
+ 11. ydlidar_ros2_driver (T-mini Plus, 360deg @ 10Hz)
+ 12. camera_tf (static: base_link -> camera_frame)
 
-手势锁定: /hobot_hand_gesture_detection 属性码 OK=11 锁定, Palm=5 解除
-控制层级: RC CH5 ARM → RC CH6 X5模式 → 语音手动(VOICE_MANUAL) → 跟随(FOLLOWING) → 手势锁定
+融合管线: 自适应聚类 -> 躯干几何过滤 -> 匈牙利匹配 -> EKF(x,y,vx,vy)
+手势锁定: /hobot_hand_gesture_detection 属性码 OK=11/Palm=5 (vote=15)
+控制层级: RC CH5 ARM -> RC CH6 X5模式 -> 语音手动 -> 跟随 -> 手势锁定
 用法: ros2 launch tracked_vehicle person_follow.launch.py
 """
 

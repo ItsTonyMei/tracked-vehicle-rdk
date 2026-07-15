@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""感知节点 — 多传感器融合 + 目标锁定 + 系统状态 (HDMI渲染)
+"""感知节点 — LiDAR-Camera 融合 + 手势锁定 + 障碍物急停 + HDMI 渲染
 
 数据职责 (单一权威源):
-  - /locked_target   (Float32): 锁定人物的 LiDAR EKF 融合距离 (米), 无锁时为 NaN
-  - /locked_track_id (Int32):   当前锁定的 track_id, 解锁时为 -1
-  - /system_ready    (Bool):    系统启动就绪信号
-  - HDMI 屏显: 检测框 + 距离 + 系统状态栏 + 启动进度
+  - /locked_target     (Point): 锁定人物 (x=距离, y=侧向偏移), 无锁时 x=NaN
+  - /locked_track_id   (Int32): 当前锁定的 track_id, 解锁时为 -1
+  - /emergency_stop    (Bool):  前方 0.5m / +-15deg 有障碍物
+  - /system_ready      (Bool):  系统启动就绪信号
+  - HDMI: 检测框 + LiDAR 融合距离 + 系统状态栏 + 启动进度
 
-手势锁定: /hobot_hand_gesture_detection 属性码 OK=11/Palm=5
+传感器:
+  Camera: GS130W SC132GS, 72deg HFOV @ 960x544, f=1.75mm 广角, 60fps via mono2d
+  LiDAR:  YDLidar T-mini Plus, 360deg @ 10Hz, 430pts, 0.84deg/pt, 胸高度 ~150cm
+
+融合管线: 自适应聚类 -> 躯干几何过滤 -> 匈牙利角度匹配 -> EKF(x,y,vx,vy)
+
+手势锁定: /hobot_hand_gesture_detection 属性码 OK=11/Palm=5 (vote=15, cooldown=3s)
   IDLE     — 无锁定, OK 手势触发锁定
   LOCKED   — 已锁定, 另一人 OK 则切换, 被锁者 Palm 则解除
-  HOLDING  — 被锁者短暂消失 (<5s), 维持锁定等待重现; 超时 → IDLE
+  HOLDING  — 被锁者短暂消失 (<5s), 维持锁定等待重现; 超时 -> IDLE
 """
 import rclpy
 from rclpy.node import Node

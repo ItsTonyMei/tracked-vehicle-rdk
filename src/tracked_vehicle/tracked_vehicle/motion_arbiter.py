@@ -3,26 +3,34 @@
 motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
 
 职责:
-  1. CI1302 语音识别 → 运动命令 + FOLLOW/STOP 状态切换
-  2. FOLLOW 模式: 由 /locked_target LiDAR 融合距离覆写 linear.x，
-     保留 body_tracking 的 angular.z (bbox 居中旋转可靠)
-  3. /cmd_vel 唯一发布者，消除多写冲突
-  4. 收到 /system_ready 信号后触发欢迎语播报
+  1. CI1302 语音识别 -> 运动命令 + FOLLOW/STOP 状态切换
+  2. FOLLOW 模式: /locked_target(Point: dist+y) 覆写速度
+     - LiDAR 距离 -> 连续速度映射 (0.7m 15cm 过渡区, 0-0.8 m/s)
+     - LiDAR 侧向偏移 -> 转向 (k=0.5 rad/s/m)
+     - fallback: body_tracking angular.z (bbox 居中)
+  3. 急停: /emergency_stop -> 立即发布零速
+  4. /cmd_vel 唯一发布者, 消除多写冲突
+  5. 收到 /system_ready 信号后触发欢迎语播报
 
 状态机:
-  VOICE_MANUAL → 语音运动命令直接发布 /cmd_vel，3s 超时自动 STOP
-  FOLLOWING   → 订阅 /locked_target 覆写线速度，
+  VOICE_MANUAL -> 语音运动命令直接发布 /cmd_vel, 3s 超时自动 STOP
+  FOLLOWING   -> 订阅 /locked_target 覆写线速度 + 侧向转向
                  /cmd_vel_body_track 提供角速度
-                 "停止"/"关闭跟随" → VOICE_MANUAL
+                 "停止"/"关闭跟随" -> VOICE_MANUAL
 
-数据源:
-  感知权威 → perception_node (/locked_target, /locked_track_id)
-  跟踪策略 → body_tracking (/cmd_vel_body_track, angular 居中)
-  语音输入 → CI1302 UART (A5 FA 协议)
-  唯一输出 → /cmd_vel (Twist, 串口桥接消费)
+跟随参数:
+  dist_min=0.7m(后退), dist_near=1.2m(停止), dist_far=3.0m(全速)
+  vel_fast=0.8 m/s, vel_slow=0.2 m/s, vel_back=-0.3 m/s
+  侧向转向增益 k_angular=0.5 rad/s/m
+
+数据流:
+  感知权威  -> /locked_target (Point) + /emergency_stop (Bool)
+  跟踪策略  -> /cmd_vel_body_track (Twist)
+  语音输入  -> CI1302 UART (A5 FA 协议)
+  唯一输出  -> /cmd_vel (Twist, motor_bridge 消费)
 
 协议 V01843: A5 FA 00 [TYPE] [CMD_ID] 00 [CKSUM] FB (8 bytes)
-  TYPE=0x81 CI1302→Host 识别结果, TYPE=0x82 Host→CI1302 触发播报
+  TYPE=0x81 CI1302->Host 识别结果, TYPE=0x82 Host->CI1302 触发播报
   CKSUM = (A5+FA+00+TYPE+CMD+00) & 0xFF
   固件: CI1302_chinese_1mic_V01843, USE_SEPARATE_WAKEUP_EN=1
 """

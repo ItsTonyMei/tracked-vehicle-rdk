@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
-LiDAR-Camera 融合引擎 — 聚类 + 数据关联 + EKF 状态估计
+LiDAR-Camera 融合引擎 — 自适应聚类 + 躯干过滤 + 匈牙利匹配 + EKF 状态估计
 
 管线 (以 LiDAR 10Hz 速率驱动):
-  /scan (YDLidar T-mini Plus: 360°, 10Hz, 430pts fixed-res, 0.84°/pt) → Euclidean 聚类 → LiDAR 目标
-  camera bboxes (SC132GS: 72° HFOV @ 960×544)                         → 角度投影      → Camera 目标
-  ── 贪心匹配 (角度+距离) ──→ EKF 更新/预测 ──→ 融合距离 + 速度
+  /scan (YDLidar T-mini Plus: 360deg, 10Hz, 430pts, 0.84deg/pt)
+    -> 自适应距离阈值聚类 (近 0.10m / 远 0.40m)
+    -> 躯干几何过滤 (弧宽 15-70cm + 曲率 <0.97, 排除墙壁/柱子)
+    -> LiDAR 候选
+  camera bboxes (GS130W SC132GS: 72deg HFOV @ 960x544, 1.75mm 广角)
+    -> 角度投影 -> Camera 候选
+  -> 匈牙利全局最优匹配 (scipy linear_sum_assignment)
+  -> EKF(x,y,vx,vy) 预测/更新 -> /locked_target (Point: dist + lateral)
 
-渲染帧 (60Hz) 仅做 EKF predict, 聚类+匹配+更新仅在 LiDAR 新帧到达时执行,
-避免 stale 计数器绑定渲染帧率、协方差坍缩等问题。
+渲染帧 (60Hz) 仅做 EKF predict, 聚类+过滤+匹配+更新仅在 LiDAR 新帧到达时执行.
 
 用法:
-  engine = FusionEngine()
+  engine = FusionEngine(cam_hfov_deg=72.0)
   for each scan + bboxes:
-      result = engine.update(scan_msg, camera_bboxes, timestamp)
-      # result[track_id] = {'dist': 1.85, 'x': 1.84, 'y': -0.15, 'vx': 0.3, 'vy': 0.0}
+      result = engine.update(scan_msg, camera_targets, img_w, timestamp)
 """
 
 import math

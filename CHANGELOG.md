@@ -16,10 +16,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **渲染降频** — 60 → 30Hz (perception_node 屏显), 轮询 10 → 5Hz (motion_arbiter), 降低 CPU/BPU 占用
 - **跟踪丢失阈值** — `track_serial_lost_num_thr` 300 → 150 帧, 更快切 STOP
 - **mono2d image_gap** — 引入 image_gap=2, 检测帧率 60 → 30FPS
+- **手势识别优化** — image_gap 回退 (恢复 60FPS), 投票阈值 30→15, 删除空间启发式 fallback, 纯属性码 OK/Palm 通道
+- **LiDAR 融合管线重构**:
+  - 自适应聚类阈值 (近 0.10m ↔ 远 0.40m, 参考 Zhu Wang et al. 2021)
+  - 躯干几何过滤 (弧宽 15-70cm + 曲率 <0.97, 排除墙壁/柱子)
+  - 贪心匹配 → 匈牙利全局匹配 (scipy linear_sum_assignment)
+  - EKF Q 矩阵 ×dt 缩放 (消除 60Hz predict 6x 噪声累积)
+  - Cartesian 质心替代径向距离均值
+- **运动控制增强**:
+  - 速度映射连续化 (0.7m 边界 15cm 过渡区, 消除震颤)
+  - vel_fast 0.3→0.8 m/s, vel_back -0.2→-0.3 m/s, dist_far 2.5→3.0m
+  - LiDAR 侧向偏移驱动转向 (k=0.5 rad/s/m)
+- **/locked_target 升级** — Float32 → Point (x=距离, y=侧向偏移)
+- **Camera FOV 修正** — 70°→72° (SC132GS 校准文件 fx=656.76 精确推算)
+
+### Added
+
+- **障碍物紧急停止** — /emergency_stop topic, 前方 ±15°/0.5m 触发急停
+- **/camera_info 订阅** — 自动获取真实内参 FOV (fallback 72°)
+- **camera_frame 静态 TF** — base_link → camera_frame
+- **python3-scipy 依赖** — 匈牙利匹配
 
 ### Fixed
 
 - perception_node `follow_on` 变量未定义 (NameError)
+- 障碍物 ID 不持久 (序号 → 角度匹配, 扫描间稳定)
+- 障碍物更新绕过 MAX_DIST_JUMP 门控 (已加保护)
+- dist_mean 径向均值 → Cartesian 质心 (宽角度聚类几何误差)
+- LiDAR 点数注释修正 (900→430, 实测 fixed_resolution 输出)
 
 ## [0.6.0] - 2026-07-03
 
