@@ -6,6 +6,8 @@
   - /locked_track_id   (Int32): 当前锁定的 track_id, 解锁时为 -1
   - /emergency_stop    (Bool):  前方 0.5m / +-15deg 有障碍物
   - /system_ready      (Bool):  系统启动就绪信号
+  - JPEG 按需解码 (img_cb 60fps仅存原始字节, render 15Hz时解码)
+  - fusion.update 独立于 decode，JPEG 损坏不中断融合管线
   - HDMI: 检测框 + LiDAR 融合距离 + 系统状态栏 + 启动进度
 
 传感器:
@@ -49,7 +51,7 @@ class PerceptionNode(Node):
         self._cam_hfov_deg = self.declare_parameter('cam_hfov_deg', 72.0).value  # SC132GS rotation=90 → 72°
 
         # ── 帧数据 ──
-        self._frame = None
+        self._frame_jpeg = None   # 压缩 JPEG 原始字节 (render 按需解码, 省 CPU)
         self._targets = None
         self._last_det_ts = 0.0
 
@@ -113,7 +115,7 @@ class PerceptionNode(Node):
         self._last_published_id = -2
 
         self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
-        self.timer = self.create_timer(1.0/30.0, self.render)
+        self.timer = self.create_timer(1.0/15.0, self.render)
         self._start_ts = self.get_clock().now().nanoseconds / 1e9
 
     # ═══════════════════════════════════════════════════════════════
@@ -214,8 +216,8 @@ class PerceptionNode(Node):
     # 回调
 
     def img_cb(self, msg: CompressedImage):
-        raw = np.frombuffer(msg.data, dtype=np.uint8)
-        self._frame = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        # 只存原始字节不解码: /image 60fps, 渲染 15Hz → 解码量降为 1/4
+        self._frame_jpeg = msg.data
 
     @staticmethod
     def _has_body(targets):
@@ -457,9 +459,21 @@ class PerceptionNode(Node):
         return img
 
     def render(self):
-        if self._frame is None:
+        jpeg = self._frame_jpeg
+        if jpeg is None:
             return
-        frame = self._frame.copy()
+
+        # ── LiDAR-Camera 融合始终运行 (不依赖 JPEG 解码成功) ──
+        targets = self._targets
+        now = self.get_clock().now().nanoseconds / 1e9
+        self._fused = self._fusion.update(
+            self._scan, targets, 960, now)  # img_w=960 (固定相机分辨率)
+
+        raw = np.frombuffer(jpeg, dtype=np.uint8)
+        frame = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        if frame is None:
+            # 融合已更新 (locked_target/emergency 最新), 跳过一次屏显
+            return
         orig_h, orig_w = frame.shape[:2]
 
         targets = self._targets
@@ -706,7 +720,7 @@ class PerceptionNode(Node):
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
 
         cv2.imshow(self._window, frame)
-        cv2.waitKey(30)
+        cv2.waitKey(1)
 
 
 def main():

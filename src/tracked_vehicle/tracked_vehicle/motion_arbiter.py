@@ -13,9 +13,9 @@ motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
   5. 收到 /system_ready 信号后触发欢迎语播报
 
 状态机:
-  VOICE_MANUAL -> 语音运动命令直接发布 /cmd_vel, 3s 超时自动 STOP
-  FOLLOWING   -> 订阅 /locked_target 覆写线速度 + 侧向转向
-                 /cmd_vel_body_track 提供角速度
+  VOICE_MANUAL -> 语音运动命令 5Hz 重发 (3s 窗口); 急停即刻取消动作
+  FOLLOWING   -> 订阅 /locked_target 覆写线速度 + 侧向转向 (1s staleness)
+                 /cmd_vel_body_track 提供角速度 (1s staleness)
                  "停止"/"关闭跟随" -> VOICE_MANUAL
 
 跟随参数:
@@ -88,11 +88,14 @@ class MotionArbiter(Node):
         self._state = State.VOICE_MANUAL
         self._last_cmd_ts = 0.0
         self._last_cmd_id = None
+        self._last_cmd_vel = None
         self._body_track_msg = None
+        self._body_track_ts = 0.0
 
         # ── LiDAR 锁目标 (来自 perception_node, Point: x=距离, y=侧向偏移) ──
         self._locked_dist = float('nan')
         self._locked_y = 0.0
+        self._locked_dist_ts = 0.0
 
         self._pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self._follow_pub = self.create_publisher(Bool, '/follow_active', 10)
@@ -144,7 +147,7 @@ class MotionArbiter(Node):
         frame = bytes([0xA5, 0xFA, 0x00, self._TYPE_TO_CI1302, cmd_id, 0x00, cksum, self._TAIL])
         try:
             self._ser.write(frame)
-        except serial.SerialException:
+        except (serial.SerialException, OSError):
             self._try_serial_reconnect()
 
     def _close_serial(self):
@@ -158,7 +161,7 @@ class MotionArbiter(Node):
             self._ser.open()
             self._ser.flushInput()
             self.get_logger().warn('Voice serial reconnected')
-        except serial.SerialException as e:
+        except (serial.SerialException, OSError) as e:
             self.get_logger().warn(f'Voice serial reconnect failed: {e}')
 
     # ═════════════════════════════════════════════════════════════
@@ -167,10 +170,14 @@ class MotionArbiter(Node):
     def _on_locked_target(self, msg: Point):
         self._locked_dist = msg.x
         self._locked_y = msg.y
+        self._locked_dist_ts = self.get_clock().now().nanoseconds / 1e9
 
     def _on_emergency_stop(self, msg: Bool):
         if msg.data and not self._emergency_stop:
-            self.get_logger().warn('EMERGENCY STOP: obstacle detected!')
+            self.get_logger().warn('EMERGENCY STOP: detected - zero vel NOW')
+            self._publish_vel('E-STOP', self._STOP_VEL)
+            self._last_cmd_id = None
+            self._last_cmd_vel = None
         self._emergency_stop = msg.data
 
     def _distance_to_linear_vel(self, dist_m):
@@ -196,29 +203,43 @@ class MotionArbiter(Node):
 
     def _on_body_track(self, msg: Twist):
         self._body_track_msg = msg
+        self._body_track_ts = self.get_clock().now().nanoseconds / 1e9
         if self._state == State.FOLLOWING and self._last_cmd_id is None:
             self._publish_following_vel()
 
     def _publish_following_vel(self):
-        """FOLLOWING 模式运动发布: LiDAR 距离覆写 linear.x + 侧向偏移驱动转向."""
-        if self._body_track_msg is None:
-            return
+        """FOLLOWING 模式运动发布: LiDAR 距离覆写 linear.x + 侧向偏移驱动转向.
 
+        两路数据各自有 1s staleness 保护: 任一上游节点崩溃时其最后值
+        不再被消费, 避免残余数据驱动车辆."""
+        now = self.get_clock().now().nanoseconds / 1e9
         out = Twist()
 
         if self._emergency_stop:
             self._pub.publish(out)  # 纯零速, 禁止旋转
             return
 
-        out.angular = self._body_track_msg.angular  # bbox 居中旋转 (fallback)
-        vel = self._distance_to_linear_vel(self._locked_dist)
-        if vel is not None:
-            out.linear.x = float(vel)
-            if math.isfinite(self._locked_y):
-                k_angular = 0.5  # rad/s per meter of lateral error
-                out.angular.z = -k_angular * self._locked_y
-        else:
-            out.linear = self._body_track_msg.linear
+        bt_msg = self._body_track_msg
+        bt_fresh = (bt_msg is not None and
+                    (now - self._body_track_ts) < 1.0)
+        lidar_fresh = (math.isfinite(self._locked_dist) and
+                       (now - self._locked_dist_ts) < 1.0)
+
+        # 角速度: 优先 LiDAR 侧向偏移, fallback body_track 居中
+        if lidar_fresh and math.isfinite(self._locked_y):
+            out.angular.z = -0.5 * self._locked_y
+        elif bt_fresh:
+            out.angular = bt_msg.angular
+
+        # 线速度: 优先 LiDAR 距离映射, fallback body_track
+        if lidar_fresh:
+            vel = self._distance_to_linear_vel(self._locked_dist)
+            if vel is not None:
+                out.linear.x = float(vel)
+            elif bt_fresh:
+                out.linear = bt_msg.linear
+        elif bt_fresh:
+            out.linear = bt_msg.linear
 
         self._pub.publish(out)
 
@@ -228,13 +249,25 @@ class MotionArbiter(Node):
     def _poll(self):
         now = self.get_clock().now().nanoseconds / 1e9
 
-        if self._last_cmd_id is not None and now - self._last_cmd_ts > self._action_duration:
-            if self._state == State.FOLLOWING:
-                self.get_logger().info('Voice motion done, resuming follow relay')
-                self._publish_following_vel()
-            else:
-                self._publish_vel('AUTO_STOP', self._STOP_VEL)
-            self._last_cmd_id = None
+        if self._last_cmd_id is not None:
+            if now - self._last_cmd_ts > self._action_duration:
+                if self._state == State.FOLLOWING:
+                    self.get_logger().info('Voice motion done, resuming follow relay')
+                    self._publish_following_vel()
+                else:
+                    self._publish_vel('AUTO_STOP', self._STOP_VEL)
+                self._last_cmd_id = None
+                self._last_cmd_vel = None
+            elif self._last_cmd_vel is not None:
+                # 动作窗口内持续重发 (5Hz), 保持 STM32 指令流连续
+                # 急停激活时立即取消动作
+                if self._emergency_stop:
+                    self._publish_vel('AUTO_STOP', self._STOP_VEL)
+                    self._last_cmd_id = None
+                    self._last_cmd_vel = None
+                    self.get_logger().warn('VOICE: cancelled by emergency stop')
+                else:
+                    self._publish_vel('REPUBLISH', self._last_cmd_vel)
 
         try:
             count = self._ser.in_waiting
@@ -250,7 +283,8 @@ class MotionArbiter(Node):
                             data[i+3] + data[i+4] + data[i+5]) & 0xFF
                     if calc == data[i+6]:
                         self._on_voice(data[i+4])
-        except serial.SerialException:
+        except (serial.SerialException, OSError) as e:
+            self.get_logger().warn(f'Voice serial error: {e}')
             self._try_serial_reconnect()
 
     # ═════════════════════════════════════════════════════════════
@@ -269,6 +303,7 @@ class MotionArbiter(Node):
                 self._state = State.FOLLOWING
                 self._follow_pub.publish(Bool(data=True))
                 self._last_cmd_id = None
+                self._last_cmd_vel = None
                 self.get_logger().info('VOICE: FOLLOW_ON → FOLLOWING mode')
             return
 
@@ -282,11 +317,13 @@ class MotionArbiter(Node):
             else:
                 self._publish_vel('STOP', self._STOP_VEL)
                 self._last_cmd_id = None
+                self._last_cmd_vel = None
             return
 
         self._publish_vel(name, vel)
         self._last_cmd_ts = now
         self._last_cmd_id = cmd_id
+        self._last_cmd_vel = vel
         self.get_logger().info(
             f'VOICE: {name} (ID=0x{cmd_id:02X}) '
             f'[{self._state.name}]')
@@ -296,6 +333,7 @@ class MotionArbiter(Node):
         self._follow_pub.publish(Bool(data=False))
         self._publish_vel('STOP', self._STOP_VEL)
         self._last_cmd_id = None
+        self._last_cmd_vel = None
         self.get_logger().info(f'{log_msg} → VOICE_MANUAL')
 
     def _publish_vel(self, name, vel):

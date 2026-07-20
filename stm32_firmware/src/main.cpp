@@ -5,13 +5,16 @@
  *   1. SBUS 接收 (USART2 PA3, 100k 8E2, 三极管反相) — WFLY RF209S 适配
  *   2. X5 MotorCmd 解析 (USART1 PA9/PA10, CH340N, 115200) — 6字节 CRC8 帧
  *   3. 坦克混控 + 双路 ESC PWM (S1=PC3/左, S2=PC2/右, Servo 库 50Hz)
- *   4. 控制优先级: 手控 SBUS(CH5 ARM) > 自动 X5 > 2s 命令超时刹停
+ *   4. 控制优先级: 手控 SBUS(CH5 ARM) > 自动 X5 > 2s 命令超时:
+ *      手控模式超时 → 自动锁定; X5 模式超时 → 停车待命不锁定 (仅 CH5 手动锁)
  *   5. IWDG 独立看门狗 (4s 超时, loop 末尾喂狗)
  *   6. CH5 ARM/DISARM 防抖 (3帧确认) + 信号丢失需手动重新 ARM
  *   7. CH6 手控/自动模式切换 (LOW=手控, HIGH=自动) + 非阻塞蜂鸣提示
  *   8. SBUS 信号防抖: 5帧确认有效, 2次连续超时判丢失
  *   9. 蜂鸣器(PC5) + LED(PC13, active-LOW) 快/中/慢三速闪烁
  *  10. MPU9250 IMU SPI2 (PB12-15) 姿态读取 (PLL 时钟源)
+ *  11. PWM 斜率限制 (软启动): 加速限速 1200us/s 抑制浪涌电流,
+ *      防止电机启动瞬时拉低母线导致 X5 欠压重启; 减速/回中不限速
  *
  * 踩坑记录: 详见 docs/lessons-learned.md
  *   - PCx 无硬件 TIM → Servo 库; Serial 需显式映射; CH340N 无自动下载
@@ -42,6 +45,7 @@ static uint16_t  g_x5Throttle = PWM_NEUTRAL;
 static uint16_t  g_x5Steering = PWM_NEUTRAL;
 static uint32_t  g_lastX5Ms   = 0;
 static bool      g_x5Valid    = false;
+static bool      g_x5Stale    = false;  // X5 指令超时 (自动模式: 停车待命, 不锁定)
 
 static struct {
     bool     valid;
@@ -102,6 +106,43 @@ static void escSet(uint16_t throttle, uint16_t steering) {
     servoLeft.writeMicroseconds((uint16_t)left);
     servoRight.writeMicroseconds((uint16_t)right);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// PWM 斜率限制 (软启动)
+// 加速方向限速 SLEW_RATE_US_PER_S, 抑制电机启动/换向浪涌电流,
+// 防止重型履带车瞬时大电流拉低母线电压导致 X5 欠压重启.
+// 减速/回中方向不限速 — 刹车与急停永远立即生效 (安全优先).
+// 解锁期间目标恒为中位, 限制器自动跟随回中, 无需显式 reset.
+// ═══════════════════════════════════════════════════════════════
+
+struct SlewLimiter {
+    uint16_t out    = PWM_NEUTRAL;
+    uint32_t lastMs = 0;
+
+    uint16_t apply(uint16_t target, uint32_t nowMs) {
+        uint32_t dt = (lastMs == 0) ? 0 : nowMs - lastMs;
+        lastMs = nowMs;
+
+        int tOff = (int)target - (int)PWM_NEUTRAL;
+        int oOff = (int)out    - (int)PWM_NEUTRAL;
+
+        // 同向减速或回中: 立即生效
+        bool decel = (abs(tOff) <= abs(oOff)) &&
+                     (tOff == 0 || ((tOff > 0) == (oOff > 0)));
+        if (decel) { out = target; return out; }
+        if (dt == 0) return out;  // 同一毫秒内不重复步进
+
+        int maxStep = (int)((uint32_t)SLEW_RATE_US_PER_S * dt / 1000U);
+        if (maxStep < 1) maxStep = 1;
+        int d = tOff - oOff;
+        if (d >  maxStep) d =  maxStep;
+        if (d < -maxStep) d = -maxStep;
+        out = (uint16_t)((int)out + d);
+        return out;
+    }
+};
+
+static SlewLimiter g_slewThr, g_slewStr;
 
 // ═══════════════════════════════════════════════════════════════
 // 蜂鸣器 (PC5, active-HIGH)
@@ -414,6 +455,7 @@ void loop() {
     if (!g_sbus.valid && sbusWasValid) {
         Serial.println("[SBUS] 信号丢失");
         g_motorArmed = false;
+        g_x5Stale = false;
         escSet(PWM_NEUTRAL, PWM_NEUTRAL);
         beepNonBlocking(1, 250);  // long beep: disarm
         sbusWasValid = false;
@@ -468,6 +510,7 @@ void loop() {
                 g_ch5Armed = false;
                 if (g_motorArmed) {
                     g_motorArmed = false;
+                    g_x5Stale = false;
                     escSet(PWM_NEUTRAL, PWM_NEUTRAL);
                     beepNonBlocking(1, 250);  // long beep: disarm
                     Serial.println("[SBUS] DISARMED (CH5 LOW)");
@@ -491,19 +534,37 @@ void loop() {
             str = sbusToPwm(g_sbus.channels[SBUS_CH_STEERING], SBUS_STR_SENSITIVITY);
             g_lastCmdMs = now;
 
-        } else if (autoMode && g_motorArmed && g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS)) {
+        } else if (autoMode && g_motorArmed) {
             // X5模式 + 已解锁: X5 指令生效 (需遥控器 CH5=ARM + CH6=HIGH)
-            thr = g_x5Throttle;
-            str = g_x5Steering;
+            // 指令超时仅停车待命 (输出中位), 不自动锁定 — 锁定只能由
+            // 遥控器 CH5 手动打到锁定位置 (或 SBUS 信号丢失) 触发
             g_lastCmdMs = now;
+            if (g_x5Valid && (now - g_lastX5Ms < X5_FRESH_TIMEOUT_MS)) {
+                thr = g_x5Throttle;
+                str = g_x5Steering;
+                if (g_x5Stale) {
+                    g_x5Stale = false;
+                    Serial.println("[X5] 指令恢复, 继续接管");
+                }
+            } else if (!g_x5Stale) {
+                g_x5Stale = true;
+                Serial.println("[SAFE] X5 指令超时, 停车待命 (保持解锁)");
+            }
         }
+
+        // PWM 斜率限制 (软启动): 加速限速抑制浪涌, 减速/回中立即生效
+        thr = g_slewThr.apply(thr, now);
+        str = g_slewStr.apply(str, now);
 
         escSet(thr, str);
         g_throttle = thr;
         g_steering = str;
 
-        if (g_motorArmed && now - g_lastCmdMs > CMD_TIMEOUT_MS) {
+        if (g_motorArmed && now - g_lastCmdMs > SBUS_LOCK_TIMEOUT_MS) {
+            // 仅手控模式可达 (SBUS 失效/failsafe 时): 自动锁定需重新 ARM
+            // X5 模式每循环刷新 g_lastCmdMs, 永不触发此锁定
             g_motorArmed = false;
+            g_x5Stale = false;
             escSet(PWM_NEUTRAL, PWM_NEUTRAL);
             beepNonBlocking(1, 250);  // long beep: disarm
             Serial.println("[SAFE] 命令超时 2s, 自动锁定!");
@@ -545,7 +606,7 @@ void loop() {
         computeMix(g_throttle, g_steering, left, right);
 
         bool sbusOk   = g_sbus.valid && !g_sbus.failsafe;
-        bool x5Ok     = g_x5Valid && (now - g_lastX5Ms < CMD_TIMEOUT_MS);
+        bool x5Ok     = g_x5Valid && (now - g_lastX5Ms < X5_FRESH_TIMEOUT_MS);
         bool autoMode = sbusOk && (g_sbus.channels[SBUS_CH_MODE] > SBUS_MODE_THRESHOLD);
 
         const char* state;

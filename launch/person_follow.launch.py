@@ -87,6 +87,8 @@ def generate_launch_description():
     # ── 7. 跟随策略 (由 motion_arbiter 语音控制启停) ─────
     # /cmd_vel → /cmd_vel_body_track, 交由 motion_arbiter 仲裁中继
     # activate_wakeup_gesture=0: 手势仅锁定/解锁目标, 不独立启动跟随
+    # log_level=error: 该节点 WARN 级日志 ~60Hz (cancel/rotate churn),
+    # 会刷爆 journal (曾 2.3GB), 只保留 ERROR
     body_track = Node(package='body_tracking', executable='body_tracking',
         output='screen',
         parameters=[{'activate_wakeup_gesture': 0,
@@ -94,7 +96,7 @@ def generate_launch_description():
                      'track_serial_lost_num_thr': 150,
                      'linear_velocity': 0.2, 'angular_velocity': 0.4,
                      'activate_robot_move_thr': 5}],
-        arguments=['--ros-args', '--log-level', log_level],
+        arguments=['--ros-args', '--log-level', 'error'],
         remappings=[('/cmd_vel', '/cmd_vel_body_track')])
 
     # ── 8. 执行: /cmd_vel → MotorCmd (motor_bridge) ──

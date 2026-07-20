@@ -227,14 +227,17 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 - **输出**: 6 字节 MotorCmd `[0xAA][th_lo][th_hi][st_lo][st_hi][CRC8]` @ 115200 → `/dev/stm32_board`
 - **映射**: throttle=1500+linear.x×500, steering=1500−angular.z×300
 - **看门狗**: 60s 无命令 → 自动发送 STOP
+- **STM32 日志转发**: 读取 STM32 在同一 USART1 上的调试打印, 关键事件 ([SAFE]/ARM/DISARM/启动 banner 等) 转发到 ROS 日志 — STM32 意外复位在 journal 中可见
 - **设计原因**: 纯执行节点, 零决策; 解耦 ROS2 消息与 STM32 二进制协议
 
 #### STM32 V3.0 固件
 - **输入**: MotorCmd (UART1) + SBUS (UART2, WFLY RF209S 接收机)
-- **CH5**: 油门锁 (0=disable ESC, 1=enable)
+- **CH5**: 油门锁 (0=disable ESC, 1=enable) — 任意模式下唯一的锁定手段
 - **CH6**: X5 模式 (0=纯RC 直通/sbus_control, 1=X5 接管)
 - **输出**: 2× ESC PWM (S1=PC3 左, S2=PC2 右, 1500μs 中位)
 - **坦克混控**: throttle±steering → 左右电机差速
+- **2s 命令超时** (v0.8.1 起): 手控模式超时 → 自动锁定 (需重新 ARM); X5 模式超时 → 输出中位停车待命, **不锁定**, 指令恢复即继续 — 自动锁定只存在于手控链路, X5 接管期间不被意外踢出
+- **PWM 斜率软启动** (v0.8.1 起): 加速方向限速 1200μs/s (0→满行程 ~0.4s), 抑制电机启动/换向浪涌电流, 防止母线电压跌落导致 X5 欠压重启; 减速/回中/急停不限速
 
 ---
 
@@ -336,9 +339,9 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 | `/scan` | LaserScan | ydlidar→perception | 10Hz | LiDAR 点云 |
 | `/follow_active` | Bool | arbiter→perception | event | 跟随模式指示 |
 | `/cmd_vel_body_track` | Twist | body_track→arbiter | 30fps | 视觉跟随命令 |
-| `/locked_target` | **Point** | perception→arbiter | 30fps | x=距离, y=侧向 |
+| `/locked_target` | **Point** | perception→arbiter | 15fps | x=距离, y=侧向 |
 | `/locked_track_id` | Int32 | perception→arbiter | event | 锁定行人 ID |
-| `/emergency_stop` | Bool | perception→arbiter | 30fps | 急停标志 |
+| `/emergency_stop` | Bool | perception→arbiter | 15fps | 急停标志 |
 | `/system_ready` | Bool | perception→arbiter | once | 启动就绪 |
 | `/cmd_vel` | Twist | arbiter→motor_bridge | ~30fps | **最终运动命令** |
 

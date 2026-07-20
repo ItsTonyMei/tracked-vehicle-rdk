@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.1] - 2026-07-20
+
+### Changed
+
+- **STM32 X5 模式超时语义** — 自动驾驶模式 (CH6=HIGH) 下 X5 指令超时不再自动锁定: 仅输出中位停车待命, 指令恢复即继续. 锁定只能由遥控器 CH5 手动打到锁定位置 (或 SBUS 信号丢失) 触发. 手控模式超时锁定逻辑不变
+- **渲染降频** — perception_node 30→15Hz, `cv2.waitKey` 30→1ms
+- **JPEG 按需解码** — img_cb 不再对每帧解码 (60fps), 仅在 render (15Hz) 时解码最新帧, JPEG 解码量降为 1/4
+- **body_tracking 日志级别** — launch 中固定为 error (该节点 WARN 级日志 ~60Hz rotate/cancel churn, 曾刷出 2.3GB journal 并淹没崩溃现场证据)
+
+### Added
+
+- **PWM 斜率软启动 (STM32)** — 加速方向限速 1200μs/s (0→满行程 ~0.4s), 抑制电机启动/换向浪涌电流, 防止母线电压跌落导致 X5 欠压硬重启; 减速/回中/急停不限速, 立即生效
+- **STM32 调试输出转发** — motor_bridge 读取 STM32 在同一 USART1 上的调试打印, 关键事件 ([SAFE]/[SBUS]/[MODE]/ARM/DISARM/启动 banner) 转发到 ROS 日志; STM32 意外复位 (IWDG/掉电) 从此在 journal 中留下 banner 痕迹
+- **语音动作指令重发** — motion_arbiter 在 3s 动作窗口内以 5Hz 持续重发语音运动命令, 保持 STM32 指令流连续 (修复单帧指令 2s 后被 STM32 判超时停车、实际动作时长不足 3s 的问题)
+
+### Fixed
+
+- pyserial `OSError` (Errno 5, USB 串口抖动) 未被捕获可致节点崩溃的隐患 — motion_arbiter / motor_bridge 统一捕获 `SerialException + OSError`
+
 ## [0.7.0] - 2026-07-13
 
 ### Changed

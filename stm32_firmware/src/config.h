@@ -47,7 +47,10 @@ constexpr bool     LED_ACTIVE_LOW      = true;
 
 // ─── 安全时序 ───
 constexpr uint32_t ESC_INIT_DELAY_MS   = 3000;   // ESC 自检
-constexpr uint32_t CMD_TIMEOUT_MS      = 2000;   // 2s 无命令 → 锁定 (X5 约 30Hz 发送)
+constexpr uint32_t X5_FRESH_TIMEOUT_MS = 2000;   // X5 指令新鲜度: 超时 → 自动模式停车待命
+constexpr uint32_t SBUS_LOCK_TIMEOUT_MS= 2000;   // 手控模式命令超时: 超时 → 自动锁定 (需重新 ARM)
+constexpr uint16_t SLEW_RATE_US_PER_S  = 1200;   // PWM 斜率限制: 0→满行程 ~0.4s 软启动
+                                                 // (抑制浪涌电流, 防 X5 欠压重启; 减速不限速)
 constexpr uint32_t STATUS_INTERVAL_MS  = 200;    // 5Hz 状态输出
 constexpr int      DIR_THRESHOLD       = 20;     // 方向判定阈值 (μs)
 

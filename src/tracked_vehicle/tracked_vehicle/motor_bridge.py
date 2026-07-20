@@ -8,6 +8,10 @@ MotorCmd 帧格式:
   [0xAA][th_lo][th_hi][st_lo][st_hi][CRC8]  6 bytes @ 115200 bps
   throttle/steering: uint16 LE, 1500us=停止, 1000-2000us 范围
   CRC8: poly=0x07, init=0x00, 覆盖 byte1-4
+
+附带诊断: STM32 在同一 USART1 上输出调试打印 (状态行/安全事件/启动 banner),
+本节点读取并将关键事件 ([SAFE]/[SBUS]/[MODE]/ARM/启动 banner 等) 转发到 ROS 日志 —
+STM32 意外复位 (IWDG/掉电) 会在 ROS 日志中留下 banner 痕迹.
 """
 
 import rclpy
@@ -56,6 +60,10 @@ class MotorBridge(Node):
         self.last_cmd_time = self.get_clock().now()
         self.timer = self.create_timer(min(5.0, self.timeout / 10.0), self.watchdog)
 
+        # STM32 调试输出转发 (USART1 与 MotorCmd 共享, STM32 print → 本端口 RX)
+        self._stm32_rx_buf = b''
+        self.create_timer(0.5, self._read_stm32_log)
+
     def destroy_node(self):
         if hasattr(self, 'ser') and self.ser.is_open:
             try:
@@ -86,23 +94,48 @@ class MotorBridge(Node):
         frame = b'\xAA' + payload + bytes([crc8(payload)])
         try:
             self.ser.write(frame)
-        except serial.SerialException:
+        except (serial.SerialException, OSError):
             if self._try_reconnect():
                 try:
                     self.ser.write(frame)
-                except serial.SerialException:
-                    pass
+                except (serial.SerialException, OSError):
+                    self.get_logger().warn('STM32: MotorCmd write failed after reconnect')
+            # else: reconnect failed → logged in _try_reconnect
 
     def _try_reconnect(self):
         try:
             if self.ser.is_open:
                 self.ser.close()
             self.ser.open()
+            self.ser.reset_input_buffer()
             self.get_logger().info('串口已重新连接')
             return True
-        except serial.SerialException as e:
+        except (serial.SerialException, OSError) as e:
             self.get_logger().warn(f'串口重连失败: {e}')
             return False
+
+    # ── STM32 调试输出转发 ──
+    # 周期状态行 (含 'thr=') 不转发; 关键事件 ([SAFE]/[SBUS]/[MODE]/ARM/
+    # 启动 banner 等) 以 WARN 转发 — STM32 复位时 banner 会出现在 ROS 日志中
+    _STM32_LOG_KEYS = ('[SAFE]', '[SBUS]', '[MODE]', '[ESC]', '[IMU]', '[MCU]',
+                       '[X5]', 'ARMED', 'DISARMED', 'READY.', 'STM32 V3.0')
+
+    def _read_stm32_log(self):
+        try:
+            n = self.ser.in_waiting
+            if n:
+                self._stm32_rx_buf += self.ser.read(n)
+        except (serial.SerialException, OSError):
+            return
+        while b'\n' in self._stm32_rx_buf:
+            line, self._stm32_rx_buf = self._stm32_rx_buf.split(b'\n', 1)
+            text = line.decode('utf-8', errors='replace').strip()
+            if not text or 'thr=' in text:
+                continue
+            if any(k in text for k in self._STM32_LOG_KEYS):
+                self.get_logger().warn(f'STM32: {text}')
+        if len(self._stm32_rx_buf) > 512:  # 无换行时防 buffer 膨胀
+            self._stm32_rx_buf = self._stm32_rx_buf[-256:]
 
 
 def main():
