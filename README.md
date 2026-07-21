@@ -208,7 +208,7 @@ tracked-vehicle-rdk/
 | L4   | **电调物理保护**      | ZTW Seal G2 内置过流/过热/堵转保护                                   |
 | L5   | **视觉丢帧暂留**      | body_tracking: 丢失 ≤150 帧维持上一指令, 避免急刹                   |
 | L6   | **串口自动恢复**      | motor_bridge / motion_arbiter: 写失败自动重连                        |
-| L7   | **LiDAR 紧急制动** ⬜ | 检测到障碍物 < 安全距离 → 强制减速/停止                             |
+| L7   | **LiDAR 紧急制动** ✅  | perception_node: 前方 0.5m/±15° 障碍物 → /emergency_stop           |
 
 ---
 
@@ -288,7 +288,7 @@ ros2 launch tracked_vehicle stereo_vision.launch.py
 | [docs/protocol-spec.md](./docs/protocol-spec.md)                                                     | ✅ 全部协议权威来源 (MotorCmd/SBUS/CI1302/PWM/VIS) |
 | [docs/stereo-vision-verification.md](./docs/stereo-vision-verification.md)                           | ✅ 双目视觉验证报告                                |
 | [docs/stereo-depth-exploration.md](./docs/stereo-depth-exploration.md)                               | ✅ 双目深度方案技术探索                            |
-| [docs/lessons-learned.md](./docs/lessons-learned.md)                                                 | ✅ 踩坑经验记录 (28条)                             |
+| [docs/lessons-learned.md](./docs/lessons-learned.md)                                                 | ✅ 踩坑经验记录 (36条)                             |
 | [docs/ROS-ExpansionboardV3.0-en-new-20250509.pdf](./docs/ROS-ExpansionboardV3.0-en-new-20250509.pdf) | ✅ STM32 扩展板手册                                |
 
 ---
@@ -310,7 +310,7 @@ ros2 launch tracked_vehicle stereo_vision.launch.py
   - [X] CI1302 语音模块 (V01843/A5FA, 唤醒词 DNN 门控)
   - [X] systemd 开机自启
 - [ ] M6：后视摄像头接入 (OpenMV VIS 帧解析)
-- [ ] M7：LiDAR 紧急制动 + 全系统安全验收
+- [X] M7：LiDAR 紧急制动 (perception_node /emergency_stop, v0.8.2 已验证)
 - [ ] M8：场地实车测试
 
 ---

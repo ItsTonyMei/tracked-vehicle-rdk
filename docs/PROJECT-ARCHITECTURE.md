@@ -32,7 +32,7 @@ Camera 72° HFOV (GDC 去畸变后), LiDAR 360° 全覆盖
 
 ```
 Layer 1: RC CH5 油门锁     ← 物理安全开关, 0=强制停车, 1=解锁
-Layer 2: RC CH6 X5 模式    ← 上位机接管开关, 0=纯RC/sbus_control, 1=X5 接管
+Layer 2: RC CH6 X5 模式    ← 上位机接管: Schmitt滞回 (>1500自动/<600手控), 非对称延时 (→手控300ms/→X5 1s)
 Layer 3: 语音手动模式       ← VOICE_MANUAL: 前进/后退/转向/停止语音命令直接驱动
 Layer 4: 语音跟随模式       ← FOLLOWING: "开启跟随" → 自动追踪画面中人体
 Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
@@ -225,19 +225,23 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 #### motor_bridge — 串口桥接
 - **输入**: `/cmd_vel` (Twist)
 - **输出**: 6 字节 MotorCmd `[0xAA][th_lo][th_hi][st_lo][st_hi][CRC8]` @ 115200 → `/dev/stm32_board`
-- **映射**: throttle=1500+linear.x×500, steering=1500−angular.z×300
-- **看门狗**: 60s 无命令 → 自动发送 STOP
-- **STM32 日志转发**: 读取 STM32 在同一 USART1 上的调试打印, 关键事件 ([SAFE]/ARM/DISARM/启动 banner 等) 转发到 ROS 日志 — STM32 意外复位在 journal 中可见
+- **映射** (v0.8.2 满增益): throttle=1500+linear.x×**1000**, steering=1500−angular.z×**600**
+- **看门狗**: 60s 无命令 /cmd_vel → 自动发送 STOP
+- **Keepalive**: 20Hz 重发最后命令, 防 STM32 判超时造成走走停停; 500ms 无新 cmd_vel 后自觉切中位 keepalive (STMCU 持续 fresh 不锁)
+- **STM32 日志转发**: 读取 STM32 调试打印, 关键事件 ([SAFE]/[X5]/[MODE]/[SBUS]/ARM/DISARM/[DBG]/启动 banner 等) + 5Hz 状态行 (含 PWM 值/ore/hdr/c1/c2) 转发到 ROS 日志
 - **设计原因**: 纯执行节点, 零决策; 解耦 ROS2 消息与 STM32 二进制协议
 
-#### STM32 V3.0 固件
-- **输入**: MotorCmd (UART1) + SBUS (UART2, WFLY RF209S 接收机)
-- **CH5**: 油门锁 (0=disable ESC, 1=enable) — 任意模式下唯一的锁定手段
-- **CH6**: X5 模式 (0=纯RC 直通/sbus_control, 1=X5 接管)
-- **输出**: 2× ESC PWM (S1=PC3 左, S2=PC2 右, 1500μs 中位)
+#### STM32 V3.0 固件 (v0.8.2)
+
+- **输入**: MotorCmd (UART1) + SBUS (UART2, WFLY RF209S 接收机, **raw 中位=1024** ≠ FrSky 992)
+- **CH5**: 油门锁 (连续3帧帧同步防抖, ~42ms确认) — 任意模式下**唯一的锁定手段**
+- **CH6**: 模式切换: 5帧中值滤波(~70ms) + Schmitt滞回 (>1500自动/<600手控) + 非对称稳定确认 (→手控300ms紧急接管要快, →X5 1s)
+- **输出**: 2× ESC PWM (S1=PC3 左, S2=PC2 右, 1500μs 中位), **满杆全行程 ±500μs (1000-2000)**, WFLY 精确校准 (SBUS_CENTER=1024, 量程 352-1695)
 - **坦克混控**: throttle±steering → 左右电机差速
-- **2s 命令超时** (v0.8.1 起): 手控模式超时 → 自动锁定 (需重新 ARM); X5 模式超时 → 输出中位停车待命, **不锁定**, 指令恢复即继续 — 自动锁定只存在于手控链路, X5 接管期间不被意外踢出
-- **PWM 斜率软启动** (v0.8.1 起): 加速方向限速 1200μs/s (0→满行程 ~0.4s), 抑制电机启动/换向浪涌电流, 防止母线电压跌落导致 X5 欠压重启; 减速/回中/急停不限速
+- **SBUS 帧同步**: 帧头 0x0F 前需 ≥1ms 空闲间隔 (帧内字节~110μs连续, 帧间~11ms — 消除数据字节 0x0F 错位锁定) + ORE 丢字节检测
+- **2s 命令超时** (v0.8.1 起, **v0.8.2 修复 uint32 时间戳下溢**): 手控模式超时 → 自动锁定 (需重新 ARM); X5 模式超时 → 输出中位停车待命, **不锁定**, 指令恢复即继续
+- **斜率软启动** (v0.8.1, **v0.8.2 已按用户决策移除**): 追求全速响应, 欠压风险靠供电侧解决
+- **诊断**: 5Hz 状态行含 `ore=`(物理丢帧)/`hdr=`(假帧头拒绝)/`c1=`/`c2=`(SBUS 原始值), 经 motor_bridge 转发 ROS
 
 ---
 
@@ -279,6 +283,16 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 | 运动控制 | 速度连续映射, vel_fast 0.8 m/s, LiDAR 侧向转向 |
 | 安全增强 | 障碍物急停, /emergency_stop topic |
 | 代码清理 | 3 agent 并行审计, 移除 12 处死代码, 修复急停 angular 泄漏 |
+
+### Phase 5: 固件攻坚 (v0.8.2)
+
+| 里程碑 | 内容 |
+|--------|------|
+| ★ X5 抖动根因 | uint32 时间戳下溢 — loop 缓存 now 与阻塞后 millis() 打戳混用, 负差回绕恒判超时, PWM 5Hz 振荡 → 修复 (1行) + bypass 隔离取证法 |
+| CH6 纵深防御 | 空闲间隔帧同步 (消除数据字节 0x0F 错位锁定) + ORE 丢帧 + 5帧中值/Schmitt滞回 + 非对称确认 + CH5 帧同步防抖 + 诊断计数器 |
+| WFLY 校准 | raw 中位=1024 (非 992), SBUS_CENTER=1024/量程 352-1695, 满杆精确 ±500μs + c1=/c2= 原始值输出 |
+| 全速化 | 手控全量程 + motor_bridge 增益 1000/600 + PWM 斜率限制移除 (用户决策, 接受欠压风险) |
+| 安全加固 | /locked_track_id 跟随门控 + CI1302 语音 500ms 冷却 + 语音动作 10Hz 独立 timer + keepalive 20Hz |
 
 ---
 

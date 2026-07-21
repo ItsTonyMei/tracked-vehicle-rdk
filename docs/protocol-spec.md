@@ -14,7 +14,7 @@
 | 5 | `CRC8` | 1-4 字节的 CRC-8/ITU |
 
 - **CRC8**: poly=0x07, init=0x00, 与 ESP32/ESP8266/原项目一致
-- **发送间隔**: 跟随 /cmd_vel topic 发布频率（body_tracking 约 30Hz）
+- **发送间隔**: 跟随 /cmd_vel 发布频率 (motion_arbiter 10Hz / body_tracking 30Hz), **motor_bridge keepalive 20Hz 持续重发保证 STM32 永不断流**
 - **范围**: throttle/steering 均为 1000-2000μs (uint16)
 - **停止值**: throttle=1500, steering=1500
 - **超时**: 2s 无有效帧 → STM32 自动切中位 + 蜂鸣锁定 (CMD_TIMEOUT_MS=2000)
@@ -52,10 +52,10 @@ X5 通过 Micro USB → CH340N → STM32 USART1 (PA9/PA10) 发送 MotorCmd。同
 
 | Byte | 内容 |
 |------|------|
-| 0 | 帧头 `0x0F` |
+| 0 | 帧头 `0x0F` (v0.8.2: 前需 ≥1ms 空闲间隔 → 消除数据字节 0x0F 假帧) |
 | 1-22 | 16 通道 × 11 bits = 176 bits |
-| 23 | 标志位: bit2=lost_frame, bit3=failsafe |
-| 24 | 帧尾 `0x00` |
+| 23 | 标志位: bit2=lost_frame, bit3=failsafe (WFLY: bit4) |
+| 24 | 帧尾 `0x00` (WFLY 非标, v0.8.2 已移除校验 → 靠空闲间隔帧同步保完整性) |
 
 ### 11-bit 通道解包
 
@@ -74,15 +74,17 @@ ch[2]  = (buf[3] >> 6 | buf[4] << 2 | buf[5] << 10) & 0x07FF
 | CH2 | 油门 | channels[1] | 左手上下 |
 | CH3 | 升降 | channels[2] | 未用 |
 | CH4 | 方向舵 | channels[3] | 未用 |
-| CH5 | ARM/DISARM | channels[4] | LOW=锁定, HIGH=解锁 (3帧防抖) |
-| CH6 | 手控/自动 | channels[5] | LOW=手控RC, HIGH=自动X5 |
+| CH5 | ARM/DISARM | channels[4] | LOW=锁定, HIGH=解锁 (帧同步3帧 ~42ms 防抖, v0.8.2) |
+| CH6 | 手控/自动 | channels[5] | Schmitt滞回 (>1500自动/<600手控) + 非对称延时 (→手控300ms/→X5 1s), v0.8.2 |
 
-### SBUS → PWM 映射
+### SBUS → PWM 映射 (WFLY 实测校准, v0.8.2)
 
 ```text
-SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
-死区: ±20 (约 ±5% 摇杆行程)
-灵敏度: ±250μs (满杆偏移)
+WFLY RF209S 实测: raw 352 (min) ~ 1024 (center) ~ 1695 (max)
+  ≠ FrSky 标准 172~992~1811 — 不同接收机 raw 中位不同, 必须以实测校准!
+死区: ±20 raw (约 ±15μs 输出)
+映射: PWM 1500 + (raw - 1024) × 500 / 672 → 满杆精确 ±500μs 全行程
+诊断: 状态行输出 c1=/c2= SBUS 原始值, 现场可验证
 ```
 
 ### 控制优先级 (含 CH6 模式)
@@ -105,6 +107,10 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 - 信号丢失: 连续 **2 次** 超时 (200ms/次) → `g_sbus.valid = false` (防单帧丢帧误判)
 - 信号丢失 → 立即 DISARM + 刹停
 - 信号恢复 → 保持 DISARM, **需手动 CH5 LOW→HIGH 重新解锁**
+- **(v0.8.2) 帧同步层**: 0x0F 帧头前需 ≥1ms 空闲 → 消除通道数据 0x0F 导致的错位锁定
+- **(v0.8.2) 通道滤波**: CH5 帧同步 3 帧 (~42ms) + CH6 5 帧中值 (~70ms) + Schmitt 滞回
+- **(v0.8.2) 诊断**: 状态行 ore= (ORE 物理丢帧) / hdr= (假帧头拒绝) 计数器, 现场定位噪声源
+- **(v0.8.2) 错误处理**: ORE (数据溢出) → 整帧丢弃; FE/NE/PE (线路噪声) → 仅清标志, 信道数据仍然可用
 
 ### Failsafe
 
@@ -114,9 +120,12 @@ SBUS 典型范围: 172 (min) ~ 992 (center) ~ 1811 (max)
 
 ### WFLY RF209S 适配说明
 
-- byte24 非标准 0x00 (变化值), 已放宽帧尾校验
-- failsafe 标志位偏移 (bit4 vs 标准 bit3)
+- **raw 中位 = 1024** (≠ FrSky 992), CH6 三档实测 352/1024/1695, 摇杆 full-range 一致 → SBUS_CENTER=1024
+- byte24 非标准 0x00 (变化值), **v0.8.2 已移除帧尾校验 → 改用空闲间隔帧头校验** (帧间空闲 ~11ms, 帧内字节~110μs 连续, ≥1ms 阈值区分)
+- failsafe 标志位偏移 (bit4=0x10 vs 标准 bit3=0x08)
+- lost_frame (byte23 bit2) → 等同 failsafe 处理
 - 未使用通道可能输出极端低值 (~4), 不能用于噪声过滤
+- **关键教训**: 换接收机/遥控器必须实测 raw 值校准, 不可假设"标准"中位
 
 ---
 
