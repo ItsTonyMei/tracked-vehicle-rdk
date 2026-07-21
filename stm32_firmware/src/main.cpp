@@ -8,13 +8,17 @@
  *   4. 控制优先级: 手控 SBUS(CH5 ARM) > 自动 X5 > 2s 命令超时:
  *      手控模式超时 → 自动锁定; X5 模式超时 → 停车待命不锁定 (仅 CH5 手动锁)
  *   5. IWDG 独立看门狗 (4s 超时, loop 末尾喂狗)
- *   6. CH5 ARM/DISARM 防抖 (3帧确认) + 信号丢失需手动重新 ARM
- *   7. CH6 手控/自动模式切换 (LOW=手控, HIGH=自动) + 非阻塞蜂鸣提示
- *   8. SBUS 信号防抖: 5帧确认有效, 2次连续超时判丢失
+ *   6. CH5 ARM/DISARM 防抖 (连续3帧确认, 帧同步采样) + 信号丢失需手动重新 ARM
+ *   7. CH6 手控/自动模式切换: 中值滤波(5帧) + Schmitt滞回 + 非对称稳定确认
+ *      (→手控 300ms 紧急接管要快, →X5 1s)
+ *   8. SBUS 信号防抖: 5帧确认有效, 2次连续超时判丢失;
+ *      帧头 0x0F 需前置 ≥1ms 空闲间隔 (帧内字节~110μs连续, 帧间~11ms),
+ *      消除数据字节 0x0F 导致的错位锁定
  *   9. 蜂鸣器(PC5) + LED(PC13, active-LOW) 快/中/慢三速闪烁
  *  10. MPU9250 IMU SPI2 (PB12-15) 姿态读取 (PLL 时钟源)
- *  11. PWM 斜率限制 (软启动): 加速限速 1200us/s 抑制浪涌电流,
- *      防止电机启动瞬时拉低母线导致 X5 欠压重启; 减速/回中不限速
+ *  11. 全量程全速输出: WFLY 中位校准 (raw 1024→PWM 1500), 满杆 ±500μs 全行程;
+ *      motor_bridge linear_gain=1000/angular_gain=600 → X5 各方向满 PWM.
+ *      (原 PWM 斜率软启动已按用户要求移除 — 若 X5 欠压重启复发需恢复)
  *
  * 踩坑记录: 详见 docs/lessons-learned.md
  *   - PCx 无硬件 TIM → Servo 库; Serial 需显式映射; CH340N 无自动下载
@@ -40,6 +44,7 @@ static uint32_t  g_lastCmdMs  = 0;
 static bool      g_escReady   = false;
 static bool      g_motorArmed = false;
 static bool      g_ch5Armed   = false;  // CH5 边沿检测状态 (防抖通过后置位)
+static bool      g_autoMode   = false;  // CH6 模式 (防抖后): false=手控RC, true=X5
 
 static uint16_t  g_x5Throttle = PWM_NEUTRAL;
 static uint16_t  g_x5Steering = PWM_NEUTRAL;
@@ -106,43 +111,6 @@ static void escSet(uint16_t throttle, uint16_t steering) {
     servoLeft.writeMicroseconds((uint16_t)left);
     servoRight.writeMicroseconds((uint16_t)right);
 }
-
-// ═══════════════════════════════════════════════════════════════
-// PWM 斜率限制 (软启动)
-// 加速方向限速 SLEW_RATE_US_PER_S, 抑制电机启动/换向浪涌电流,
-// 防止重型履带车瞬时大电流拉低母线电压导致 X5 欠压重启.
-// 减速/回中方向不限速 — 刹车与急停永远立即生效 (安全优先).
-// 解锁期间目标恒为中位, 限制器自动跟随回中, 无需显式 reset.
-// ═══════════════════════════════════════════════════════════════
-
-struct SlewLimiter {
-    uint16_t out    = PWM_NEUTRAL;
-    uint32_t lastMs = 0;
-
-    uint16_t apply(uint16_t target, uint32_t nowMs) {
-        uint32_t dt = (lastMs == 0) ? 0 : nowMs - lastMs;
-        lastMs = nowMs;
-
-        int tOff = (int)target - (int)PWM_NEUTRAL;
-        int oOff = (int)out    - (int)PWM_NEUTRAL;
-
-        // 同向减速或回中: 立即生效
-        bool decel = (abs(tOff) <= abs(oOff)) &&
-                     (tOff == 0 || ((tOff > 0) == (oOff > 0)));
-        if (decel) { out = target; return out; }
-        if (dt == 0) return out;  // 同一毫秒内不重复步进
-
-        int maxStep = (int)((uint32_t)SLEW_RATE_US_PER_S * dt / 1000U);
-        if (maxStep < 1) maxStep = 1;
-        int d = tOff - oOff;
-        if (d >  maxStep) d =  maxStep;
-        if (d < -maxStep) d = -maxStep;
-        out = (uint16_t)((int)out + d);
-        return out;
-    }
-};
-
-static SlewLimiter g_slewThr, g_slewStr;
 
 // ═══════════════════════════════════════════════════════════════
 // 蜂鸣器 (PC5, active-HIGH)
@@ -220,8 +188,9 @@ static void sbusInit() {
 
 static bool sbusParseFrame(const uint8_t *frame, uint16_t *channels) {
     if (frame[0] != 0x0F) return false;
-    // Parse channels regardless of flag bits — flags are handled by caller
-    // WFLY RF209S byte24 varies, skip end-byte check
+    // WFLY RF209S byte24 非标, 不校验固定位 (bit4=failsafe 可变,
+    // 其他位的定义与标准 SBUS 不同). 帧完整性由 sbusPoll 的
+    // 空闲间隔帧头校验保证 (无帧尾/CRC 可依赖).
 
     channels[0]  = ((frame[1]      ) | (frame[2]  << 8)) & 0x07FF;
     channels[1]  = ((frame[2]  >> 3) | (frame[3]  << 5)) & 0x07FF;
@@ -243,12 +212,35 @@ static bool sbusParseFrame(const uint8_t *frame, uint16_t *channels) {
     return true;
 }
 
+static bool sbusFrameReady = false;  // 新 SBUS 帧到达标志 (中值滤波同步用)
+
+// SBUS 链路诊断计数器 (5Hz 状态行输出, 现场定位抖动来源):
+//   hdrRej — 0x0F 前无空闲间隔被拒: 数据字节误匹配/错位尝试
+//   ore    — USART2 溢出丢字节: 打印阻塞/中断延迟导致的物理丢帧
+static uint32_t g_sbusHdrRejCnt = 0;
+static uint32_t g_sbusOreCnt    = 0;
+
 static void sbusPoll() {
-    // 逐字节扫描: 读到非 0x0F 就丢弃, 遇到 0x0F 尝试读完整帧
-    // 超时从 2000μs 降到 500μs — 100k baud 每字节约 120μs, 500μs 够 4 字节传输
+    // 逐字节扫描 + 空闲间隔帧头校验:
+    // SBUS 帧周期 14ms, 帧内 25 字节约 110μs/个连续到达, 帧间空闲 ~11ms.
+    // 仅当 0x0F 前静默 ≥SBUS_HDR_GAP_US 才认作帧头 — 通道数据中的 0x0F
+    // 字节不会触发假帧, 从根上消除"错位锁定" (稳态错位会输出一致错值,
+    // 中值滤波对一致错值无效, 必须在帧同步层解决).
+    // 注意: 字节经 ISR 环形缓冲, micros() 是读取时刻而非到达时刻.
+    // 阻塞打印后排空缓冲时整批帧头会被拒, 最坏多丢 1-2 帧 (~28ms),
+    // 由 5 帧有效性防抖吸收 — 宁可拒真帧, 不可收错帧.
+    static uint32_t lastByteUs = 0;
     while (SerialSbus.available() > 0) {
+        uint32_t rxUs = micros();
         int b = SerialSbus.read();
-        if (b != 0x0F) continue;
+        if (b != 0x0F) { lastByteUs = rxUs; continue; }
+
+        if (lastByteUs != 0 && rxUs - lastByteUs < SBUS_HDR_GAP_US) {
+            lastByteUs = rxUs;
+            g_sbusHdrRejCnt++;
+            continue;
+        }
+        lastByteUs = rxUs;
 
         // 疑似帧头, 尝试读取剩余 24 bytes
         uint8_t frame[SBUS_FRAME_LEN];
@@ -261,14 +253,28 @@ static void sbusPoll() {
             }
             if (!ok) break;
             frame[i] = SerialSbus.read();
+            lastByteUs = micros();
         }
         if (!ok) continue;  // 帧不完整, 丢弃
+
+        // ESC PWM 噪声可导致 USART2 奇偶/帧/噪声错误 (FE/NE/PE),
+        // 但仅 ORE (数据溢出) 才意味着真正丢字节. FE/NE/PE 的帧
+        // 信道数据通常仍然可用 — 下游的 end-byte 校验 + 中值滤波
+        // 会处理偶尔的字节错误.
+        if (USART2->SR & USART_SR_ORE) {
+            USART2->SR = ~USART_SR_ORE;
+            g_sbusOreCnt++;
+            continue;
+        }
+        // 清除其他噪声标志 (不影响当前帧判断)
+        USART2->SR = ~(USART_SR_FE | USART_SR_NE | USART_SR_PE);
 
         if (sbusParseFrame(frame, g_sbus.channels)) {
             // Read flags from byte23: bit2=lost_frame, bit4=failsafe (WFLY RF209S non-standard)
             g_sbus.lostFrame   = frame[23] & 0x04;
             g_sbus.failsafe    = frame[23] & 0x10;
             g_sbus.lastFrameMs = millis();
+            sbusFrameReady = true;  // 新帧到达, 中值滤波采样同步点
 
             // lost_frame treated as failsafe — prevents control until good frame returns
             if (g_sbus.lostFrame) {
@@ -283,10 +289,12 @@ static void sbusPoll() {
     }
 }
 
+// WFLY 校准: 摇杆中位 raw=1024 → PWM 1500 (遥控器 µs 显示 1500 = raw 1024),
+// 满杆 raw 352/1695 → PWM 1000/2000 精确全行程 (无钳位损失)
 static uint16_t sbusToPwm(uint16_t sbusVal, int sensitivity) {
-    int off = (int)sbusVal - 992;
+    int off = (int)sbusVal - SBUS_CENTER;
     if (abs(off) <= 20) return PWM_NEUTRAL;
-    int val = (int)PWM_NEUTRAL + off * sensitivity / (992 - 172);
+    int val = (int)PWM_NEUTRAL + off * sensitivity / SBUS_RAW_HALF_SPAN;
     if (val < PWM_MIN) val = PWM_MIN;
     if (val > PWM_MAX) val = PWM_MAX;
     return (uint16_t)val;
@@ -480,25 +488,51 @@ void loop() {
     }
 
     // 5. 控制优先级仲裁
+    // 刷新 now: sbusPoll/x5ParseMotorCmd 会阻塞数 ms, 且 g_lastX5Ms 用
+    // 阻塞后的 millis() 打戳 — 若此处仍用循环顶部捕获的 now, 时间差
+    // now - g_lastX5Ms 为负 → uint32 下溢 → 恒判 X5 超时,
+    // 每帧触发 超时/恢复 循环, PWM 以 ~5Hz 振荡 (车原地抖动).
+    now = millis();
     if (g_escReady) {
         bool sbusActive = g_sbus.valid && !g_sbus.failsafe;
 
         uint16_t thr = PWM_NEUTRAL, str = PWM_NEUTRAL;
 
-        // SBUS CH5 边沿检测 (防抖: 需连续 3 帧稳定在同一状态)
-        bool ch5High = g_sbus.valid && (g_sbus.channels[SBUS_CH_ARM] > SBUS_ARM_THRESHOLD);
-        static bool lastCh5High = false;
-        static int  ch5StableCnt = 0;
+        // ── 帧同步采样: 仅在新 SBUS 帧到达 (~14ms) 时更新 CH5/CH6 ──
+        // 信号无效/失控时冻结采样与模式仲裁, 保持上次状态.
+        // 修复: 原 CH5 "3帧防抖" 实际按 loop 迭代计数 (~μs级),
+        // 3 次迭代 <1ms 即饱和, 等于无防抖 — 一段 14ms 毛刺窗口
+        // 即可触发假 ARM/DISARM. 现与 CH6 统一按帧采样.
+        static uint16_t ch6buf[5] = {0, 0, 0, 0, 0};
+        static uint8_t  ch6idx = 0;
+        static uint16_t lastCh6Raw = 0;
+        static bool     ch5High  = false;
+        static int      ch5StableFrames = 0;
+        if (sbusFrameReady) {
+            sbusFrameReady = false;
+            if (sbusActive) {
+                // CH5: 连续 3 帧 (~42ms) 同态才确认
+                bool h = g_sbus.channels[SBUS_CH_ARM] > SBUS_ARM_THRESHOLD;
+                ch5StableFrames = (h == ch5High) ? ch5StableFrames + 1 : 1;
+                if (ch5StableFrames > 3) ch5StableFrames = 3;
+                ch5High = h;
 
-        if (ch5High == lastCh5High) {
-            if (ch5StableCnt < 3) ch5StableCnt++;
-        } else {
-            ch5StableCnt = 1;  // 状态变化, 重置计数
+                // CH6 跳变诊断 (>500 跳变打印, 经 motor_bridge [DBG] 转发到 ROS)
+                uint16_t curCh6Raw = g_sbus.channels[SBUS_CH_MODE];
+                if (abs((int)curCh6Raw - (int)lastCh6Raw) > 500 && lastCh6Raw != 0) {
+                    Serial.print("[DBG] CH6 ");
+                    Serial.print(lastCh6Raw);
+                    Serial.print("->");
+                    Serial.println(curCh6Raw);
+                }
+                lastCh6Raw = curCh6Raw;
+                ch6buf[ch6idx] = curCh6Raw;
+                ch6idx = (ch6idx + 1) % 5;
+            }
         }
-        lastCh5High = ch5High;
 
-        // 只在防抖通过后触发边沿 (ch5Armed 为文件级全局, 持久化边沿状态)
-        if (ch5StableCnt == 3) {
+        // CH5 边沿检测 (防抖通过后才触发, ch5Armed 为文件级全局持久化)
+        if (ch5StableFrames == 3) {
             if (ch5High && !g_ch5Armed) {
                 g_ch5Armed = true;
                 if (!g_motorArmed) {
@@ -518,23 +552,52 @@ void loop() {
             }
         }
 
-        // CH6 模式切换: LOW=手控(SBUS), HIGH=X5模式 (RDK X5决策)
-        bool autoMode = sbusActive && (g_sbus.channels[SBUS_CH_MODE] > SBUS_MODE_THRESHOLD);
-        static bool lastAutoMode = false;
-        if (autoMode != lastAutoMode && sbusActive) {
-            beepNonBlocking(autoMode ? 2 : 1);  // X5两声, 手控一声 (非阻塞)
-            Serial.print("[MODE] 切换到 ");
-            Serial.println(autoMode ? "X5(RDK X5)" : "手控(RC)");
-        }
-        lastAutoMode = autoMode;
+        // CH6 中值滤波 (5帧 ≈70ms 取中位) + Schmitt 滞回 + 跳变诊断
+        // 关键: ch6buf[] 仅在 sbusFrameReady 时更新 (每 ~14ms 一次),
+        // 而非每个 loop 迭代 (~14us). 5 帧覆盖 ~70ms, 单帧尖峰真正被隔离.
+        uint16_t s[5] = {ch6buf[0], ch6buf[1], ch6buf[2], ch6buf[3], ch6buf[4]};
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4 - i; j++)
+                if (s[j] > s[j+1]) { uint16_t t = s[j]; s[j] = s[j+1]; s[j+1] = t; }
+        uint16_t ch6val = s[2];  // 中位数
 
-        if (sbusActive && g_motorArmed && !autoMode) {
+        static bool autoModeHyst = false;
+        if (ch6val > 1500)      autoModeHyst = true;
+        else if (ch6val < 600)  autoModeHyst = false;
+        // 600-1500: 保持上次 (Schmitt 死区, 覆盖三档开关中位 ~992)
+
+        // 模式切换稳定确认 (非对称): CH6 机械振荡/毛刺已由上游
+        // 中值滤波 (~70ms) + Schmitt 死区 (覆盖中位 ~992) 吸收,
+        // 此处只需确认"刻意拨动并保持"而非长延时兜底:
+        //   → 手控 300ms: 操作者紧急接管通道, 必须快 (安全)
+        //   → X5   1s   : 进入自动可从容
+        // 仲裁 gate 在 sbusActive 上: 失控/failsafe 期间冻结,
+        // 防止失控把模式静默翻回手控.
+        static bool     pendingMode     = false;
+        static uint32_t pendingSinceMs  = 0;
+        if (sbusActive) {
+            bool desired = autoModeHyst;
+            if (desired != g_autoMode && desired == pendingMode) {
+                uint32_t needMs = desired ? MODE_TO_AUTO_MS : MODE_TO_MANUAL_MS;
+                if (now - pendingSinceMs > needMs) {
+                    g_autoMode    = desired;
+                    beepNonBlocking(g_autoMode ? 2 : 1);
+                    Serial.print("[MODE] 切换到 ");
+                    Serial.println(g_autoMode ? "X5(RDK X5)" : "手控(RC)");
+                }
+            } else {
+                pendingMode    = desired;
+                pendingSinceMs = now;
+            }
+        }
+
+        if (sbusActive && g_motorArmed && !g_autoMode) {
             // 手控模式: SBUS 摇杆直接控制
             thr = sbusToPwm(g_sbus.channels[SBUS_CH_THROTTLE], SBUS_THR_SENSITIVITY);
             str = sbusToPwm(g_sbus.channels[SBUS_CH_STEERING], SBUS_STR_SENSITIVITY);
             g_lastCmdMs = now;
 
-        } else if (autoMode && g_motorArmed) {
+        } else if (g_autoMode && g_motorArmed) {
             // X5模式 + 已解锁: X5 指令生效 (需遥控器 CH5=ARM + CH6=HIGH)
             // 指令超时仅停车待命 (输出中位), 不自动锁定 — 锁定只能由
             // 遥控器 CH5 手动打到锁定位置 (或 SBUS 信号丢失) 触发
@@ -551,10 +614,6 @@ void loop() {
                 Serial.println("[SAFE] X5 指令超时, 停车待命 (保持解锁)");
             }
         }
-
-        // PWM 斜率限制 (软启动): 加速限速抑制浪涌, 减速/回中立即生效
-        thr = g_slewThr.apply(thr, now);
-        str = g_slewStr.apply(str, now);
 
         escSet(thr, str);
         g_throttle = thr;
@@ -607,12 +666,12 @@ void loop() {
 
         bool sbusOk   = g_sbus.valid && !g_sbus.failsafe;
         bool x5Ok     = g_x5Valid && (now - g_lastX5Ms < X5_FRESH_TIMEOUT_MS);
-        bool autoMode = sbusOk && (g_sbus.channels[SBUS_CH_MODE] > SBUS_MODE_THRESHOLD);
+        // 显示用防抖后的 g_autoMode, 与实际控制状态一致 (不再用裸通道值)
 
         const char* state;
-        if (sbusOk && g_motorArmed && !autoMode)      state = "RC ARM";
-        else if (sbusOk && !g_motorArmed && !autoMode) state = "RC LCK";
-        else if (sbusOk && autoMode)                   state = "X5    ";
+        if (sbusOk && g_motorArmed && !g_autoMode)      state = "RC ARM";
+        else if (sbusOk && !g_motorArmed && !g_autoMode) state = "RC LCK";
+        else if (sbusOk && g_autoMode)                   state = "X5    ";
         else if (x5Ok)                                 state = "X5    ";
         else                                           state = "--------";
 
@@ -633,7 +692,15 @@ void loop() {
             Serial.print(" | CH5=");
             Serial.print(g_sbus.channels[SBUS_CH_ARM] > SBUS_ARM_THRESHOLD ? "HI" : "LO");
             Serial.print(" CH6=");
-            Serial.print(autoMode ? "AUTO" : "MAN");
+            Serial.print(g_autoMode ? "AUTO" : "MAN");
+            Serial.print(" c1=");
+            Serial.print(g_sbus.channels[SBUS_CH_STEERING]);
+            Serial.print(" c2=");
+            Serial.print(g_sbus.channels[SBUS_CH_THROTTLE]);
+            Serial.print(" ore=");
+            Serial.print(g_sbusOreCnt);
+            Serial.print(" hdr=");
+            Serial.print(g_sbusHdrRejCnt);
         }
         Serial.println();
     }

@@ -40,15 +40,15 @@ class MotorBridge(Node):
         port = self.declare_parameter('serial_port', '/dev/stm32_board').value
         baud = self.declare_parameter('serial_baud', 115200).value
 
-        self.linear_gain = self.declare_parameter('linear_gain', 500.0).value
-        self.angular_gain = self.declare_parameter('angular_gain', 300.0).value
+        self.linear_gain = self.declare_parameter('linear_gain', 1000.0).value
+        self.angular_gain = self.declare_parameter('angular_gain', 600.0).value
         self.steering_invert = self.declare_parameter('steering_invert', True).value
         self.pwm_center = 1500
         self.pwm_min = 1000
         self.pwm_max = 2000
 
         try:
-            self.ser = serial.Serial(port, baud, timeout=0.1)
+            self.ser = serial.Serial(port, baud, timeout=0.1, write_timeout=0.1)
             self.get_logger().info(f'串口已打开: {port} @ {baud}')
         except serial.SerialException as e:
             self.get_logger().fatal(f'无法打开串口 {port}: {e}')
@@ -59,6 +59,13 @@ class MotorBridge(Node):
         self.timeout = self.declare_parameter('cmd_timeout_s', 60.0).value
         self.last_cmd_time = self.get_clock().now()
         self.timer = self.create_timer(min(5.0, self.timeout / 10.0), self.watchdog)
+
+        # Keepalive: 20Hz 重发最后命令, 桥接 body_tracking 短暂丢帧,
+        # 防止 STM32 判超时停车造成走走停停. 500ms 无新命令后停发.
+        self._last_thr = self.pwm_center
+        self._last_str = self.pwm_center
+        self._ka_stale = True  # 未收到过命令, 不发 keepalive
+        self.create_timer(0.05, self._keepalive)  # 20Hz
 
         # STM32 调试输出转发 (USART1 与 MotorCmd 共享, STM32 print → 本端口 RX)
         self._stm32_rx_buf = b''
@@ -82,12 +89,32 @@ class MotorBridge(Node):
         throttle = max(self.pwm_min, min(self.pwm_max, throttle))
         steering = max(self.pwm_min, min(self.pwm_max, steering))
 
+        self._last_thr = throttle
+        self._last_str = steering
+        self.get_logger().debug(f"CMD recv thr={throttle} str={steering}")
+        self._ka_stale = False
         self._send(throttle, steering)
 
     def watchdog(self):
         dt = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
         if dt > self.timeout:
+            self._ka_stale = True
             self._send(self.pwm_center, self.pwm_center)
+
+    def _keepalive(self):
+        """20Hz keepalive: 永久持续, 保持 STM32 指令流永不中断.
+        正常时重发最后命令; 500ms 无新 cmd_vel 后切换为持续发送中位
+        (车辆安全停车, 但 STM32 保持 fresh — 不超时/不锁).
+        新 cmd_vel 到达后自动恢复."""
+        if self._ka_stale:
+            self._send(self.pwm_center, self.pwm_center)  # 持续中位, STM32 不超时
+            return
+        dt = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
+        if dt > 0.5:
+            self._ka_stale = True
+            self._send(self.pwm_center, self.pwm_center)
+            return
+        self._send(self._last_thr, self._last_str)
 
     def _send(self, throttle: int, steering: int):
         payload = struct.pack('<HH', throttle, steering)
@@ -118,7 +145,7 @@ class MotorBridge(Node):
     # 周期状态行 (含 'thr=') 不转发; 关键事件 ([SAFE]/[SBUS]/[MODE]/ARM/
     # 启动 banner 等) 以 WARN 转发 — STM32 复位时 banner 会出现在 ROS 日志中
     _STM32_LOG_KEYS = ('[SAFE]', '[SBUS]', '[MODE]', '[ESC]', '[IMU]', '[MCU]',
-                       '[X5]', 'ARMED', 'DISARMED', 'READY.', 'STM32 V3.0')
+                       '[X5]', '[DBG]', 'ARMED', 'DISARMED', 'READY.', 'STM32 V3.0')
 
     def _read_stm32_log(self):
         try:
@@ -130,10 +157,12 @@ class MotorBridge(Node):
         while b'\n' in self._stm32_rx_buf:
             line, self._stm32_rx_buf = self._stm32_rx_buf.split(b'\n', 1)
             text = line.decode('utf-8', errors='replace').strip()
-            if not text or 'thr=' in text:
+            if not text:
                 continue
             if any(k in text for k in self._STM32_LOG_KEYS):
                 self.get_logger().warn(f'STM32: {text}')
+            elif 'thr=' in text:
+                self.get_logger().warn(f'STM32-PWM: {text}')
         if len(self._stm32_rx_buf) > 512:  # 无换行时防 buffer 膨胀
             self._stm32_rx_buf = self._stm32_rx_buf[-256:]
 

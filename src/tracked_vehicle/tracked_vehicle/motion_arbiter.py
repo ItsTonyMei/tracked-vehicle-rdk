@@ -38,7 +38,7 @@ motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, Point
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Int32
 import serial
 import time
 import math
@@ -97,6 +97,11 @@ class MotionArbiter(Node):
         self._locked_y = 0.0
         self._locked_dist_ts = 0.0
 
+        # ── 锁定人物 ID (来自 perception_node, -1=无锁) ──
+        self._locked_id = None
+
+        self._last_voice_ts = 0.0  # CI1302 防抖冷却 (扬声器→麦克风反馈抑制)
+
         self._pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self._follow_pub = self.create_publisher(Bool, '/follow_active', 10)
         self._sub_bt = self.create_subscription(
@@ -105,6 +110,8 @@ class MotionArbiter(Node):
             Bool, '/system_ready', self._on_system_ready, 10)
         self._sub_target = self.create_subscription(
             Point, '/locked_target', self._on_locked_target, 10)
+        self._sub_locked_id = self.create_subscription(
+            Int32, '/locked_track_id', self._on_locked_track_id, 10)
         self._sub_emergency = self.create_subscription(
             Bool, '/emergency_stop', self._on_emergency_stop, 10)
         self._emergency_stop = False
@@ -121,7 +128,8 @@ class MotionArbiter(Node):
 
         self._welcome_played = False
 
-        self._timer = self.create_timer(0.2, self._poll)
+        self._timer = self.create_timer(0.2, self._poll)         # CI1302 串口轮询
+        self._action_timer = self.create_timer(0.1, self._publish_action)  # 语音动作独立重发 10Hz
         self._follow_pub.publish(Bool(data=False))
         self.get_logger().info('Motion arbiter ready — VOICE_MANUAL mode')
 
@@ -172,6 +180,13 @@ class MotionArbiter(Node):
         self._locked_y = msg.y
         self._locked_dist_ts = self.get_clock().now().nanoseconds / 1e9
 
+    def _on_locked_track_id(self, msg: Int32):
+        self._locked_id = msg.data if msg.data >= 0 else None
+        if self._locked_id is None:
+            self._locked_dist = float('nan')
+            self._locked_y = 0.0
+            self._locked_dist_ts = 0.0
+
     def _on_emergency_stop(self, msg: Bool):
         if msg.data and not self._emergency_stop:
             self.get_logger().warn('EMERGENCY STOP: detected - zero vel NOW')
@@ -208,12 +223,17 @@ class MotionArbiter(Node):
             self._publish_following_vel()
 
     def _publish_following_vel(self):
-        """FOLLOWING 模式运动发布: LiDAR 距离覆写 linear.x + 侧向偏移驱动转向.
+        """FOLLOWING 模式运动发布: 必须有 OK 手势锁定的人才能跟随.
 
-        两路数据各自有 1s staleness 保护: 任一上游节点崩溃时其最后值
-        不再被消费, 避免残余数据驱动车辆."""
+        未锁定时: 即使 FOLLOWING 模式激活, 也输出零速 — 车辆原地等待锁定.
+        两路数据各自有 1s staleness 保护."""
         now = self.get_clock().now().nanoseconds / 1e9
         out = Twist()
+
+        # 安全门控: 无锁定时禁止跟随, 防止跟踪未经授权的路人
+        if self._locked_id is None:
+            self._pub.publish(out)
+            return
 
         if self._emergency_stop:
             self._pub.publish(out)  # 纯零速, 禁止旋转
@@ -246,29 +266,35 @@ class MotionArbiter(Node):
     # ═════════════════════════════════════════════════════════════
     # 轮询
 
-    def _poll(self):
+    # ═════════════════════════════════════════════════════════════
+    # 语音动作独立重发 (10Hz timer, 与 CI1302 串口完全解耦)
+
+    def _publish_action(self):
+        """10Hz 重发激活的语音动作. 独立 timer, 不受 CI1302 误识别干扰."""
+        if self._last_cmd_id is None or self._last_cmd_vel is None:
+            return
         now = self.get_clock().now().nanoseconds / 1e9
+        if now - self._last_cmd_ts > self._action_duration:
+            if self._state == State.FOLLOWING:
+                self.get_logger().info('Voice motion done, resuming follow relay')
+                self._publish_following_vel()
+            else:
+                self._publish_vel('AUTO_STOP', self._STOP_VEL)
+            self._last_cmd_id = None
+            self._last_cmd_vel = None
+            return
+        if self._emergency_stop:
+            self._publish_vel('AUTO_STOP', self._STOP_VEL)
+            self._last_cmd_id = None
+            self._last_cmd_vel = None
+            self.get_logger().warn('VOICE: cancelled by emergency stop')
+            return
+        self._publish_vel('REPUBLISH', self._last_cmd_vel)
 
-        if self._last_cmd_id is not None:
-            if now - self._last_cmd_ts > self._action_duration:
-                if self._state == State.FOLLOWING:
-                    self.get_logger().info('Voice motion done, resuming follow relay')
-                    self._publish_following_vel()
-                else:
-                    self._publish_vel('AUTO_STOP', self._STOP_VEL)
-                self._last_cmd_id = None
-                self._last_cmd_vel = None
-            elif self._last_cmd_vel is not None:
-                # 动作窗口内持续重发 (5Hz), 保持 STM32 指令流连续
-                # 急停激活时立即取消动作
-                if self._emergency_stop:
-                    self._publish_vel('AUTO_STOP', self._STOP_VEL)
-                    self._last_cmd_id = None
-                    self._last_cmd_vel = None
-                    self.get_logger().warn('VOICE: cancelled by emergency stop')
-                else:
-                    self._publish_vel('REPUBLISH', self._last_cmd_vel)
+    # ═════════════════════════════════════════════════════════════
+    # CI1302 串口轮询
 
+    def _poll(self):
         try:
             count = self._ser.in_waiting
             if not count:
@@ -297,6 +323,11 @@ class MotionArbiter(Node):
 
         name, vel = self.CMD_MAP[cmd_id]
         now = self.get_clock().now().nanoseconds / 1e9
+
+        # 防 CI1302 扬声器→麦克风反馈误触发: 命令后 500ms 冷却
+        if now - self._last_voice_ts < 0.5:
+            return
+        self._last_voice_ts = now
 
         if cmd_id == 0x0D:  # FOLLOW_ON
             if self._state != State.FOLLOWING:
