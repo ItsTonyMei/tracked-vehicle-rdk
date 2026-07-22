@@ -146,15 +146,15 @@ tracked-vehicle-rdk/
 │   ├── protocol-spec.md              #    ✅ 全部协议权威来源 (MotorCmd/SBUS/CI1302/PWM/VIS)
 │   ├── stereo-vision-verification.md #    ✅ 双目视觉验证报告
 │   ├── stereo-depth-exploration.md   #    ✅ 双目深度方案技术探索 (BPU争用,结论:不可并发)
-│   ├── lessons-learned.md            #    ✅ 踩坑经验记录 (28条)
+│   ├── lessons-learned.md            #    ✅ 踩坑经验记录 (35条)
 │   ├── ROS-ExpansionboardV3.0-en-new-20250509.pdf    #    ✅ STM32 扩展板手册
 │
 ├── launch/                           # 🚀 ROS2 launch 文件
 │   ├── stereo_vision.launch.py       #    ✅ 双目采集 + StereoNet 深度图 (独立实验,非主线)
 │   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
-│   └── person_follow.launch.py       #    ✅ 手势唤醒人体跟随 (11 节点流水线)
+│   └── person_follow.launch.py       #    ✅ 语音+手势人体跟随 (12 节点流水线)
 │
-├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.6.0)
+├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.9.0)
 │   ├── setup.py                      #    ✅ colcon 构建配置
 │   ├── setup.cfg                     #    ✅ 可执行文件路径
 │   ├── package.xml                   #    ✅ ROS2 依赖声明
@@ -168,8 +168,10 @@ tracked-vehicle-rdk/
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理) ✅
 ├── ci1302_firmware/                   # 🎙️ CI1302 语音模块固件 ✅
-│   ├── 命令词播报词协议列表V3_履带车.xlsx  #    V3 履带车专用协议 (14条)
-│   └── sfw20260703134807158195173/       #    V01843 v2 固件 (readme.txt + xlsx)
+│   ├── 命令词播报词协议列表V6_瓦力履带车.xlsx  #    V6 协议 (16条, 含锁定/解除跟随者)
+│   └── sfw20260722104324158193959/        #    V6 固件 (V01843 SDK, 2026-07-22)
+│       ├── CI1302_chinese_1mic_V01843_UART1_115200_2M.bin
+│       └── readme.txt
 │
 ├── stm32_firmware/                   # 🔩 STM32 扩展板固件 V3.0 ✅
 │   ├── platformio.ini                #    PlatformIO 构建 (STM32F103RCT6)
@@ -305,12 +307,12 @@ ros2 launch tracked_vehicle stereo_vision.launch.py
 - [X] M5：跟随系统
   - [X] 人体跟随 (TROS body_tracking + motion_arbiter 仲裁)
   - [X] LiDAR-Camera 融合测距 (聚类+角度匹配+EKF, 纯 LiDAR 距离)
-  - [X] 手势唤醒 (OK=锁定, Palm=解除) + 空间重识别
+  - [X] 手势锁定 (OK + Victory ✌️ 并行) + 滑动窗口投票 + 空间 fallback
   - [X] HDMI 本地屏显 (1024×600, 系统监控 + CPU/BPU/MEM)
-  - [X] CI1302 语音模块 (V01843/A5FA, 唤醒词 DNN 门控)
-  - [X] systemd 开机自启
+  - [X] CI1302 V6 语音模块 (V01843/A5FA, 锁/解锁语音反馈)
+  - [X] systemd 开机自启 (启动 20s)
 - [ ] M6：后视摄像头接入 (OpenMV VIS 帧解析)
-- [X] M7：LiDAR 紧急制动 (perception_node /emergency_stop, v0.8.2 已验证)
+- [X] M7：LiDAR 紧急制动 (perception_node /emergency_stop + 被锁人豁免, v0.9.0)
 - [ ] M8：场地实车测试
 
 ---

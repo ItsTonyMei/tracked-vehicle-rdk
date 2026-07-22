@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] - 2026-07-22
+
+### Added
+
+- **CI1302 V6 固件适配** — 语义 ID 0x04 (锁定跟随者) / 0x05 (解除跟随者) 双向通信
+- **手势语音反馈** — FOLLOWING 模式下手势锁/解锁自动触发 CI1302 播报确认
+- **语音→手势 relay** — 用户说"锁定跟随者"/"解除跟随者" → `/voice_gesture_cmd` → perception_node 等效手势操作
+- **Victory (✌️) 并行锁定** — 滑动窗口投票 + 多码并行 `lock_codes=[11,2]` + 置信度门控 + 空间 fallback
+- **自适应手势发现** — 新出现手势码自动打印到日志, HDMI 实时进度条
+- **EKF 速度前馈** — `/locked_target.z` 发布 EKF vx, motion_arbiter 用于预判后退
+
+### Changed
+
+- **横向控制: P→PD** — `k_p=0.4, k_d=1.2`, ±5cm 死区, 低通滤波 α=0.25
+- **后退逻辑重写** — Schmitt 迟滞 (进 <0.85m / 出 >1.0m), 速度地板 -0.15 m/s, 0.5m 分段渐变
+- **锁稳定性修复** — RE-ID 保持窗口 1s (之前第 1 帧即切换), 搜索半径 150→80px
+- **20Hz 独立跟随定时器** — 近距相机遮挡时不依赖 body_track 消息
+- **急停豁免被锁人** — 被锁目标角度 ±15° 内障碍物不再触发紧急停止
+- **参数调优** — `angular_gain 600→450`, staleness `1.0→0.3s`, `PERSON_STALE_MAX 30→15`
+
+### Fixed
+
+- **PWM 日志炸弹** — motor_bridge 周期状态 WARN→DEBUG, 轮询 0.5→2s
+- **日志清理** — `/root/.ros/log/` (1.9GB), `/var/log/syslog` (632MB), journal vacuum
+
+### Optimized
+
+- **启动时间 62s→20s** — 禁用 8 个无用 systemd 服务
+- **CPU** — 移除重复 `fusion.update()` 调用
+- **磁盘 13G→9.6G** — apt 缓存 + autoremove
+
+## [0.8.2] - 2026-07-21
+
+### Fixed
+
+- **X5 模式原地剧烈抖动 (<5cm)** — uint32 时间戳下溢根因修复 (潜伏自 v0.8.1)
+- **WFLY 遥控器校准** — SBUS 通道映射实测修正
+- **CH6 纵深防御** — 5 帧中值滤波 + Schmitt 滞回 + 非对称稳定确认
+
+### Changed
+
+- **全速化** — 移除斜率限制, 欠压风险靠供电侧解决
+- 急停 angular 泄漏修复
+- 死代码全面清理
+
 ## [0.8.1] - 2026-07-20
 
 ### Changed

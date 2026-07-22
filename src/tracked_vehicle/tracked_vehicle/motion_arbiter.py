@@ -3,36 +3,39 @@
 motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
 
 职责:
-  1. CI1302 语音识别 -> 运动命令 + FOLLOW/STOP 状态切换
-  2. FOLLOW 模式: /locked_target(Point: dist+y) 覆写速度
-     - LiDAR 距离 -> 连续速度映射 (0.7m 15cm 过渡区, 0-0.8 m/s)
-     - LiDAR 侧向偏移 -> 转向 (k=0.5 rad/s/m)
-     - fallback: body_tracking angular.z (bbox 居中)
+  1. CI1302 V6 语音识别 -> 运动命令 + FOLLOW/STOP + 锁/解锁 relay
+  2. FOLLOW 模式: /locked_target(Point: dist+y+vx) 覆写速度
+     - LiDAR 距离 -> 连续速度映射 (Schmitt 迟滞后退 + EKF vx 前馈)
+     - LiDAR 侧向 -> PD 转向 (k_p=0.4, k_d=1.2, ±5cm deadband)
+     - fallback: body_tracking angular.z
   3. 急停: /emergency_stop -> 立即发布零速
   4. /cmd_vel 唯一发布者, 消除多写冲突
-  5. 收到 /system_ready 信号后触发欢迎语播报
+  5. /system_ready 信号后欢迎语 + 手势锁/解锁 CI1302 语音确认
 
 状态机:
-  VOICE_MANUAL -> 语音运动命令 5Hz 重发 (3s 窗口); 急停即刻取消动作
-  FOLLOWING   -> 订阅 /locked_target 覆写线速度 + 侧向转向 (1s staleness)
-                 /cmd_vel_body_track 提供角速度 (1s staleness)
+  VOICE_MANUAL -> 语音运动命令 10Hz 重发 (3s 窗口)
+  FOLLOWING   -> 20Hz 独立定时器驱动跟随速度 (不依赖 body_track)
+                 LiDAR 优先 0.3s staleness, body_track fallback
                  "停止"/"关闭跟随" -> VOICE_MANUAL
 
 跟随参数:
-  dist_min=0.7m(后退), dist_near=1.2m(停止), dist_far=3.0m(全速)
-  vel_fast=0.8 m/s, vel_slow=0.2 m/s, vel_back=-0.3 m/s
-  侧向转向增益 k_angular=0.5 rad/s/m
+  dist_min=0.7m, dist_near=1.2m, dist_far=3.0m
+  back_enter=0.85m, back_exit=1.0m (迟滞), back_vel_floor=-0.15
+  vel_fast=0.8, vel_slow=0.2, vel_back=-0.3
+  k_angular=0.4, k_angular_d=1.2, deadband=0.05m, lpf_alpha=0.25
+  k_ff_approach=1.2 (EKF vx 前馈增益)
 
 数据流:
-  感知权威  -> /locked_target (Point) + /emergency_stop (Bool)
-  跟踪策略  -> /cmd_vel_body_track (Twist)
-  语音输入  -> CI1302 UART (A5 FA 协议)
+  感知权威  -> /locked_target (Point: x=dist, y=lat, z=EKF_vx) + /emergency_stop
+  跟踪策略  -> /cmd_vel_body_track (Twist, angular fallback)
+  语音输入  -> CI1302 UART (A5 FA V6 协议: 0x04/0x05 锁/解)
+  手势反馈  -> /voice_gesture_cmd (Int32, relay 至 perception_node)
   唯一输出  -> /cmd_vel (Twist, motor_bridge 消费)
 
-协议 V01843: A5 FA 00 [TYPE] [CMD_ID] 00 [CKSUM] FB (8 bytes)
-  TYPE=0x81 CI1302->Host 识别结果, TYPE=0x82 Host->CI1302 触发播报
+协议 V6 (V01843 SDK): A5 FA 00 [TYPE] [CMD_ID] 00 [CKSUM] FB (8 bytes)
+  TYPE=0x81 CI1302->Host, TYPE=0x82 Host->CI1302
+  0x04=锁定跟随者, 0x05=解除跟随者 (V6 新增)
   CKSUM = (A5+FA+00+TYPE+CMD+00) & 0xFF
-  固件: CI1302_chinese_1mic_V01843, USE_SEPARATE_WAKEUP_EN=1
 """
 
 import rclpy

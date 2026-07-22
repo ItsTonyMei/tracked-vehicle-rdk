@@ -318,3 +318,52 @@
 - **修复**: SBUS_CENTER=1024, SBUS_RAW_HALF_SPAN=672, 满杆精确 ±500μs
 - **教训**: 换遥控器/接收机必须实测 raw 值校准; 状态行加 c1=/c2= 原始值
   输出可现场确认, 不要假设"标准"中位
+
+---
+
+## v0.9.0 经验
+
+### 37. 锁漂移根因 — RE-ID 在第一帧触发, HOLDING 状态形同虚设
+
+- **症状**: 多人画面中锁定 A 人, B 人路过遮挡 A 不到半秒, 锁定自动切到 B
+- **根因**: `_target_visible()` 返回 false → `_lost_since` 刚设为 now → **同一帧内立即调用 `_find_nearest_body()`** → 150px 内找到 B → `_locked_id` 切到 B, `_lost_since` 重置。5 秒 HOLDING 超时逻辑在代码后面, 但永远到不了 — RE-ID 在第一步就成功并重置了计时器
+- **修复**: 加 `_lost_reid_min_s=1.0s` 保持窗口 — 丢失 1s 后**才**尝试 RE-ID, 缩小搜索半径到 80px
+- **教训**: 状态机审查必须逐分支走查, 看似完整的 IDLE→LOCKED→HOLDING 三段式, 实际 HOLDING 只在 RE-ID 失败后才触发; RE-ID 成功直接绕过了整个保护层
+
+### 38. 后退犹豫 — 15cm 过渡区 + 无迟滞 + 静摩擦地板
+
+- **症状**: 人走向车辆时后退犹豫/不动, 远不如前进丝滑
+- **根因 (三层)**:
+  1. 后退过渡区仅 0.70-0.85m (15cm), LiDAR σ≈3cm → 距离在边界跳动 → 速度在-0.3↔0 反复切换
+  2. 无迟滞: 进出后退区使用同一阈值, 产生 chatter
+  3. 履带车静摩擦阈值约 -0.15 m/s: 过渡区上段 (0.78-0.85m) 计算的 -0.08~-0.14 m/s 不足以克服静摩擦
+- **修复**: Schmitt 迟滞 (进<0.85m/出>1.0m) + 速度地板 -0.15 + 0.5m 分段渐变
+- **教训**: 对称的进出阈值对噪声敏感的传感器是致命的; 任何边界检测都应使用迟滞
+
+### 39. 纯 P 控制对重载履带车必然震荡
+
+- **症状**: 前进跟随时左右来回修正不收敛, 12s 周期持续震荡
+- **根因**: `angular.z = -0.5 * y` — 纯比例控制, 阻尼比 ζ=0, 物理意义上是无阻尼振荡器。对重载履带车 (15kg, 大惯性, skid-steer 非线性摩擦), P 控制的相位滞后更严重
+- **修复**: PD 控制 (k_p=0.4, k_d=1.2, ζ≈0.65) + ±5cm 死区 + 低通滤波 α=0.25
+- **教训**: 嵌入式机器人控制中, 纯 P 控制几乎永远不够 — 系统惯性和传感器延迟 (>100ms LiDAR) 叠加后相位裕度极差
+
+### 40. 手势模型不输出 confidence — attr.score 字段不存在
+
+- **症状**: 加了置信度门控 `attr.score >= 0.5` 后 perception_node 启动即 crash
+- **根因**: Horizon `PerceptionTargets.Attribute` 消息的字段是 `confidence` 不是 `score`, 且 gestureDet_8x21 模型输出 confidence=0.0 (不填充)
+- **修复**: 改用 `attr.confidence`, 默认阈值 0.0 (相当于禁用)
+- **教训**: 跨厂商 SDK 的 ROS 消息字段, 不要凭直觉假设命名; 必须先读 `.msg` 定义文件
+
+### 41. 日志炸弹 — body_tracking @ WARN 可刷出 1.9GB
+
+- **症状**: /root/.ros/log/ 持续增长, syslog 631MB, journal 103MB
+- **根因**: body_tracking 节点内部 rotate/cancel 状态切换 @ 60Hz WARN 级别; motor_bridge STM32-PWM 周期日志 @ 2Hz WARN
+- **修复**: motor_bridge 周期状态改 DEBUG, 清理历史日志 2.5GB, journal vacuum 50MB
+- **教训**: 第三方节点的日志级别需从第一天就锁定; ROS 日志文件 (`/root/.ros/log/`) 无自动 rotation, 比 journal 更危险
+
+### 42. 系统启动 62s — apt-show-versions 独占 45s
+
+- **症状**: 机器人上电到服务启动需 1 分钟以上
+- **根因**: `apt-show-versions.service` (45s) + `hobot-switch-aptsource.service` (23s) 在嵌入式设备上完全无意义
+- **修复**: disable + mask 8 个无用服务, 启动降到 20s
+- **教训**: 嵌入式 Linux 出厂镜像带了大量桌面/server 级 systemd 服务, 首次部署应做 `systemd-analyze blame` 审计

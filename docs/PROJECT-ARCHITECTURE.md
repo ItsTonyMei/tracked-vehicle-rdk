@@ -225,7 +225,7 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 #### motor_bridge — 串口桥接
 - **输入**: `/cmd_vel` (Twist)
 - **输出**: 6 字节 MotorCmd `[0xAA][th_lo][th_hi][st_lo][st_hi][CRC8]` @ 115200 → `/dev/stm32_board`
-- **映射** (v0.8.2 满增益): throttle=1500+linear.x×**1000**, steering=1500−angular.z×**600**
+- **映射** (v0.9.0 校准增益): throttle=1500+linear.x×**1000**, steering=1500−angular.z×**450**
 - **看门狗**: 60s 无命令 /cmd_vel → 自动发送 STOP
 - **Keepalive**: 20Hz 重发最后命令, 防 STM32 判超时造成走走停停; 500ms 无新 cmd_vel 后自觉切中位 keepalive (STMCU 持续 fresh 不锁)
 - **STM32 日志转发**: 读取 STM32 调试打印, 关键事件 ([SAFE]/[X5]/[MODE]/[SBUS]/ARM/DISARM/[DBG]/启动 banner 等) + 5Hz 状态行 (含 PWM 值/ore/hdr/c1/c2) 转发到 ROS 日志
@@ -245,7 +245,7 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 
 ---
 
-## 5. 研发历程 (v0.1 → v0.8)
+## 5. 研发历程 (v0.1 → v0.9)
 
 ### Phase 1: 基础能力 (v0.1 - v0.4)
 
@@ -293,6 +293,18 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 | WFLY 校准 | raw 中位=1024 (非 992), SBUS_CENTER=1024/量程 352-1695, 满杆精确 ±500μs + c1=/c2= 原始值输出 |
 | 全速化 | 手控全量程 + motor_bridge 增益 1000/600 + PWM 斜率限制移除 (用户决策, 接受欠压风险) |
 | 安全加固 | /locked_track_id 跟随门控 + CI1302 语音 500ms 冷却 + 语音动作 10Hz 独立 timer + keepalive 20Hz |
+
+### Phase 6: 稳定性 + 系统优化 (v0.9.0)
+
+| 里程碑 | 内容 |
+|--------|------|
+| ★ CI1302 V6 | 语义 0x04/0x05 锁定/解除跟随者双向通信, 手势→语音确认反馈, 语音→手势等效 relay |
+| ★ 锁稳定性 | RE-ID 保持窗口 1s (修复秒切 bug), 搜索半径 150→80px, 急停豁免被锁人 |
+| ★ 横向 PD | 纯 P→PD (k_p=0.4, k_d=1.2), ±5cm 死区, 低通滤波 α=0.25, staleness 1→0.3s |
+| ★ 后退丝滑 | Schmitt 迟滞 + 速度地板(-0.15) + EKF vx 前馈 + 20Hz 独立定时器 |
+| 手势 Phase 3 | Victory(✌️) 并行锁定, 滑动窗口投票, 置信度门控, 空间 fallback, 自适应发现 |
+| 系统优化 | 启动 62s→20s (禁用 8 无用服务), 磁盘 13G→9.6G, PWM 日志炸弹修复 |
+| 参数调优 | angular_gain 600→450, PERSON_STALE_MAX 30→15 |
 
 ---
 
