@@ -6,7 +6,7 @@ motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
   1. CI1302 V6 语音识别 -> 运动命令 + FOLLOW/STOP + 锁/解锁 relay
   2. FOLLOW 模式: /locked_target(Point: dist+y+vx) 覆写速度
      - LiDAR 距离 -> 连续速度映射 (Schmitt 迟滞后退 + EKF vx 前馈)
-     - LiDAR 侧向 -> PD 转向 (k_p=0.4, k_d=1.2, ±5cm deadband)
+     - LiDAR 侧向 -> P + LPF 转向 (k_p=0.4, ±5cm deadband, α=0.25)
      - fallback: body_tracking angular.z
   3. 急停: /emergency_stop -> 立即发布零速
   4. /cmd_vel 唯一发布者, 消除多写冲突
@@ -22,7 +22,7 @@ motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
   dist_min=0.7m, dist_near=1.2m, dist_far=3.0m
   back_enter=0.85m, back_exit=1.0m (迟滞), back_vel_floor=-0.15
   vel_fast=0.8, vel_slow=0.2, vel_back=-0.3
-  k_angular=0.4, k_angular_d=1.2, deadband=0.05m, lpf_alpha=0.25
+  k_angular=0.4, deadband=0.05m, lpf_alpha=0.25
   k_ff_approach=1.2 (EKF vx 前馈增益)
 
 数据流:
@@ -90,9 +90,8 @@ class MotionArbiter(Node):
         self._vel_slow = self.declare_parameter('follow_vel_slow', 0.2).value
         self._vel_back = self.declare_parameter('follow_vel_back', -0.3).value
 
-        # ── 横向 PD 控制参数 ──
+        # ── 横向 P 控制参数 (跟踪场景用纯P+LPF, 不用D: D项会对抗目标移动) ──
         self._k_angular = self.declare_parameter('k_angular', 0.4).value
-        self._k_angular_d = self.declare_parameter('k_angular_damping', 1.2).value
         self._angular_deadband = self.declare_parameter('angular_deadband_m', 0.05).value
         self._angular_lpf = self.declare_parameter('angular_lpf_alpha', 0.25).value
 
@@ -115,9 +114,7 @@ class MotionArbiter(Node):
         self._locked_vx = 0.0    # EKF vx: <0=人在靠近 (前馈用)
         self._locked_dist_ts = 0.0
 
-        # ── PD 横向控制状态 ──
-        self._prev_y = 0.0
-        self._prev_y_dot = 0.0
+        # ── P + LPF 横向控制状态 ──
         self._prev_angular_z = 0.0
 
         # ── 后退迟滞状态 ──
@@ -219,8 +216,8 @@ class MotionArbiter(Node):
             self._locked_y = 0.0
             self._locked_dist_ts = 0.0
 
-        # ── CI1302 语音反馈: FOLLOWING 模式下手势锁/解锁 → 播报确认 ──
-        if self._state != State.FOLLOWING or new_id == prev_id:
+        # ── CI1302 语音反馈: 任意模式下手势锁/解锁 → 播报确认 ──
+        if new_id == prev_id:
             return
         if new_id is not None:
             # 锁定 / 切换目标 → 播报 "锁定跟随者"
@@ -316,25 +313,18 @@ class MotionArbiter(Node):
         lidar_fresh = (math.isfinite(self._locked_dist) and
                        (now - self._locked_dist_ts) < 0.3)
 
-        # ── 角速度: PD 控制 (LiDAR 侧向偏移优先, body_track fallback) ──
+        # ── 角速度: P + LPF (LiDAR 侧向偏移优先, body_track fallback) ──
+        # 跟踪场景不用 D 项: 目标移动产生的 ẏ 会被 D 误解为车辆过冲而反向修正
         if lidar_fresh and math.isfinite(self._locked_y):
             y = self._locked_y
             # 死区: |y| < 5cm → 不修正
             if abs(y) < self._angular_deadband:
                 raw_z = 0.0
             else:
-                # 数值微分 + 低通滤波
-                dt = max(now - self._locked_dist_ts, 0.01)
-                raw_dot = (y - self._prev_y) / dt
-                y_dot = (self._angular_lpf * raw_dot +
-                         (1.0 - self._angular_lpf) * self._prev_y_dot)
-                self._prev_y_dot = y_dot
-                # PD: angular = -(k_p * y + k_d * y_dot)
-                raw_z = -(self._k_angular * y + self._k_angular_d * y_dot)
-            # 输出低通滤波 (平滑 10Hz →
+                raw_z = -self._k_angular * y
+            # 输出低通滤波 (平滑 10Hz 阶梯)
             out.angular.z = (self._angular_lpf * raw_z +
                              (1.0 - self._angular_lpf) * self._prev_angular_z)
-            self._prev_y = y
             self._prev_angular_z = out.angular.z
         elif bt_fresh:
             out.angular = bt_msg.angular
@@ -433,15 +423,30 @@ class MotionArbiter(Node):
                 self._follow_pub.publish(Bool(data=True))
                 self._last_cmd_id = None
                 self._last_cmd_vel = None
+                # 已锁定时进入跟随 → 触发锁定语音确认
+                if self._locked_id is not None:
+                    self._write_cmd(0x04)
+                    self.get_logger().info(
+                        f'CI1302: lock feedback (FOLLOW entry) → #{self._locked_id}')
                 self.get_logger().info('VOICE: FOLLOW_ON → FOLLOWING mode')
             return
 
         if cmd_id == 0x0E:  # FOLLOW_OFF
+            # 退出前如有锁定 → 触发解锁语音
+            if self._locked_id is not None:
+                self._write_cmd(0x05)
+                self.get_logger().info(
+                    f'CI1302: release feedback (FOLLOW exit) ← #{self._locked_id}')
             self._exit_following('VOICE: FOLLOW_OFF')
             return
 
         if name == 'STOP':
             if self._state == State.FOLLOWING:
+                # 停止跟随前如有锁定 → 触发解锁语音
+                if self._locked_id is not None:
+                    self._write_cmd(0x05)
+                    self.get_logger().info(
+                        f'CI1302: release feedback (STOP exit) ← #{self._locked_id}')
                 self._exit_following('VOICE: STOP (exit follow)')
             else:
                 self._publish_vel('STOP', self._STOP_VEL)

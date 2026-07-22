@@ -384,6 +384,7 @@ class PerceptionNode(Node):
                     if lock_hits >= self._VOTE_THRESHOLD:
                         if now - self._gesture_ts >= self._ok_cooldown_s:
                             self._gesture_window.clear()
+                            self._gesture_ts = now  # 先设冷却, 防止 _on_ok 失败时重复触发
                             self.get_logger().info(
                                 f'GESTURE LOCK: code={lock_code} hits={lock_hits}')
                             self._on_ok(now, msg)
@@ -396,6 +397,7 @@ class PerceptionNode(Node):
                     if unlock_hits >= self._VOTE_THRESHOLD:
                         if now - self._gesture_ts >= self._ok_cooldown_s:
                             self._gesture_window.clear()
+                            self._gesture_ts = now  # 先设冷却, 防止 _on_palm 失败时重复触发
                             self.get_logger().info(
                                 f'GESTURE UNLOCK: code={unlock_code} hits={unlock_hits}')
                             self._on_palm(now)
