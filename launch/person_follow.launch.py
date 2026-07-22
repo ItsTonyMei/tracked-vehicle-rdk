@@ -108,7 +108,15 @@ def generate_launch_description():
     perception = Node(package='tracked_vehicle', executable='perception_node',
         name='perception_node', output='screen',
         parameters=[{'rotate_deg': 0,
-                     'cam_hfov_deg': 72.0}])
+                     'cam_hfov_deg': 72.0,
+                     'lock_codes': [11, 2],  # OK + Victory (✌️) 并行锁定
+                     'unlock_codes': [5],  # Palm
+                     'gesture_min_score': 0.0,
+                     'gesture_match_max_px': 250.0,
+                     'gesture_vote_threshold': 15,
+                     'gesture_window_max': 30,
+                     'lost_reid_min_s': 1.0,
+                     'reid_max_dist_px': 80.0}])
 
     # ── 10. 运动仲裁 (语音 + FOLLOW距离覆写) ──────────
     arbiter = Node(package='tracked_vehicle', executable='motion_arbiter',

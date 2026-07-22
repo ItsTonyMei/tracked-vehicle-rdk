@@ -49,6 +49,8 @@ class PerceptionNode(Node):
         self._lost_reid_min_s = self.declare_parameter('lost_reid_min_s', 1.0).value
         self._reid_max_dist_px = self.declare_parameter('reid_max_dist_px', 80.0).value
         self._empty_reset_s = self.declare_parameter('empty_reset_s', 10.0).value
+        self._gesture_min_score = self.declare_parameter('gesture_min_score', 0.0).value
+        self._gesture_match_max_px = self.declare_parameter('gesture_match_max_px', 250.0).value
         self._max_det_age_s = self.declare_parameter('max_det_age_s', 0.5).value
         self._cam_hfov_deg = self.declare_parameter('cam_hfov_deg', 72.0).value  # SC132GS rotation=90 → 72°
 
@@ -75,9 +77,15 @@ class PerceptionNode(Node):
         self._startup_failed = set()
         self._startup_timeout_s = 25.0
 
-        # ── 手势投票 (OK=11, Palm=5) ──
+        # ── 手势投票 (滑动窗口, 多码并行) ──
         self._gesture_ts = 0.0
-        self._gesture_votes = {}
+        self._gesture_window = []           # deque-like: list of (code, score)
+        self._gesture_window_max = self.declare_parameter('gesture_window_max', 30).value
+        # 锁定码列表: OK=11 + Victory=2 (✌️) 并行触发
+        self._lock_codes = self.declare_parameter('lock_codes', [11, 2]).value
+        self._unlock_codes = self.declare_parameter('unlock_codes', [5]).value
+        # 诊断: 自动发现未识别的手势码 (仅首次打印)
+        self._gesture_codes_seen = set()
 
         # ── 锁定状态机 ──
         self._locked_id = None
@@ -205,6 +213,7 @@ class PerceptionNode(Node):
                 body_map[bt.track_id] = r
         if not body_map:
             return None
+        # Pass 1: 严格手在人体 bbox 内
         for gt in gesture_msg.targets:
             for groi in gt.rois:
                 if groi.type != 'hand':
@@ -214,6 +223,23 @@ class PerceptionNode(Node):
                 for tid, brect in body_map.items():
                     if self._point_in_rect(gx, gy, brect):
                         return tid
+        # Pass 2 (fallback): 伸臂场景 — 找最近人体 (< _gesture_match_max_px px)
+        best_id, best_dist = None, float('inf')
+        for gt in gesture_msg.targets:
+            for groi in gt.rois:
+                if groi.type != 'hand':
+                    continue
+                gx = groi.rect.x_offset + groi.rect.width / 2.0
+                gy = groi.rect.y_offset + groi.rect.height / 2.0
+                for tid, brect in body_map.items():
+                    bx = brect.x_offset + brect.width / 2.0
+                    by = brect.y_offset + brect.height / 2.0
+                    d = ((gx - bx) ** 2 + (gy - by) ** 2) ** 0.5
+                    if d < best_dist:
+                        best_dist = d
+                        best_id = tid
+        if best_dist < self._gesture_match_max_px:
+            return best_id
         return None
 
     # ═══════════════════════════════════════════════════════════════
@@ -316,33 +342,60 @@ class PerceptionNode(Node):
                     self._lost_since = 0.0
 
     def gesture_cb(self, msg: PerceptionTargets):
-        """属性码手势识别: OK=11 锁定, Palm=5 解除.
-        处理第一个非零手势后立即返回，防止后续 gesture=0 清零投票."""
+        """滑动窗口手势投票: 多码并行 + 置信度门控 + 自适应发现.
+
+        OK=11, Victory=2(✌️) 可并行触发锁定; Palm=5 触发解锁.
+        30 帧窗口内 ≥15 帧命中即触发, 容忍短暂掉帧.
+        首次出现的新手势码自动打印, 方便发现 Victory 等新码."""
         now = self.get_clock().now().nanoseconds / 1e9
 
         for t in msg.targets:
             for attr in t.attributes:
                 try:
                     code = int(attr.value)
+                    score = float(attr.confidence)
                 except (ValueError, TypeError):
                     continue
-                if code == 0:
-                    for k in list(self._gesture_votes.keys()):
-                        self._gesture_votes[k] = max(0, self._gesture_votes[k] - 2)
+
+                # 自适应发现: 打印未见过的手势码
+                if code != 0 and code not in self._gesture_codes_seen:
+                    self._gesture_codes_seen.add(code)
+                    self.get_logger().warn(
+                        f'GESTURE DISCOVERY: code={code} score={score:.3f} '
+                        f'(lock_codes={self._lock_codes}, unlock_codes={self._unlock_codes})')
+
+                # 置信度门控: 低置信度不计入窗口
+                if code != 0 and score < self._gesture_min_score:
                     continue
-                self._gesture_votes[code] = self._gesture_votes.get(code, 0) + 1
-                for k in list(self._gesture_votes.keys()):
-                    if k != code:
-                        self._gesture_votes[k] = 0
-                if self._gesture_votes.get(code, 0) >= self._VOTE_THRESHOLD:
-                    self._gesture_votes.clear()
-                    if now - self._gesture_ts < self._ok_cooldown_s:
-                        return
-                    if code == 11:
-                        self._on_ok(now, msg)
-                    elif code == 5:
-                        self._on_palm(now)
-                return
+
+                # 滑动窗口
+                self._gesture_window.append((code, score))
+                if len(self._gesture_window) > self._gesture_window_max:
+                    self._gesture_window.pop(0)
+
+                # 检查锁定触发 (多码并行)
+                for lock_code in self._lock_codes:
+                    lock_hits = sum(1 for c, _ in self._gesture_window
+                                    if c == lock_code)
+                    if lock_hits >= self._VOTE_THRESHOLD:
+                        if now - self._gesture_ts >= self._ok_cooldown_s:
+                            self._gesture_window.clear()
+                            self.get_logger().info(
+                                f'GESTURE LOCK: code={lock_code} hits={lock_hits}')
+                            self._on_ok(now, msg)
+                            return
+
+                # 检查解锁触发
+                for unlock_code in self._unlock_codes:
+                    unlock_hits = sum(1 for c, _ in self._gesture_window
+                                      if c == unlock_code)
+                    if unlock_hits >= self._VOTE_THRESHOLD:
+                        if now - self._gesture_ts >= self._ok_cooldown_s:
+                            self._gesture_window.clear()
+                            self.get_logger().info(
+                                f'GESTURE UNLOCK: code={unlock_code} hits={unlock_hits}')
+                            self._on_palm(now)
+                            return
 
     def follow_cb(self, msg: Bool):
         self._follow_active = msg.data
@@ -521,23 +574,18 @@ class PerceptionNode(Node):
         if jpeg is None:
             return
 
-        # ── LiDAR-Camera 融合始终运行 (不依赖 JPEG 解码成功) ──
-        targets = self._targets
-        now = self.get_clock().now().nanoseconds / 1e9
-        self._fused = self._fusion.update(
-            self._scan, targets, 960, now)  # img_w=960 (固定相机分辨率)
-
+        # ── JPEG 解码 ──
         raw = np.frombuffer(jpeg, dtype=np.uint8)
         frame = cv2.imdecode(raw, cv2.IMREAD_COLOR)
         if frame is None:
-            # 融合已更新 (locked_target/emergency 最新), 跳过一次屏显
             return
         orig_h, orig_w = frame.shape[:2]
 
+        # ── LiDAR-Camera 融合 (单次调用, 15Hz predict, 10Hz 完整管线) ──
         targets = self._targets
         now = self.get_clock().now().nanoseconds / 1e9
         self._fused = self._fusion.update(
-            self._scan, self._targets, orig_w, now)
+            self._scan, targets, orig_w, now)
         holding = (self._locked_id is not None and self._lost_since > 0.0)
 
         # ── 发布锁定目标距离 + 侧向偏移 + EKF逼近速度 + track_id ──
@@ -702,6 +750,32 @@ class PerceptionNode(Node):
         cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, mode_dot, -1)
         cv2.putText(frame, mode_str, (x + 20, row2_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+
+        # ── 手势投票状态: 显示当前活跃码及命中数 ──
+        gx = 370
+        if self._gesture_window:
+            codes = set(c for c, s in self._gesture_window if c != 0)
+            best = None
+            best_hits = 0
+            for code in codes:
+                hits = sum(1 for c, _ in self._gesture_window if c == code)
+                if hits > best_hits:
+                    best_hits = hits
+                    best = code
+            if best is not None and best_hits > 3:
+                bar_w, bar_h = 80, 4
+                bar_x, bar_y = gx, row2_y - 2
+                ratio = min(1.0, best_hits / self._VOTE_THRESHOLD)
+                fill_w = int(bar_w * ratio)
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h),
+                             (50, 50, 50), -1)
+                bar_color = (0, 255, 0) if best in self._lock_codes else (
+                    (0, 200, 255) if best in self._unlock_codes else (150, 150, 150))
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h),
+                             bar_color, -1)
+                cv2.putText(frame, f'G:{best} {best_hits}/{self._VOTE_THRESHOLD}',
+                           (bar_x + bar_w + 4, row2_y + 6),
+                           self._FONT, 0.55, bar_color, self._FONT_THICK)
 
         if not self._startup_done:
             self._check_startup_progress()

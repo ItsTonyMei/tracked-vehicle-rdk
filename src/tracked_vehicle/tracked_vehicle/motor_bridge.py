@@ -69,7 +69,7 @@ class MotorBridge(Node):
 
         # STM32 调试输出转发 (USART1 与 MotorCmd 共享, STM32 print → 本端口 RX)
         self._stm32_rx_buf = b''
-        self.create_timer(0.5, self._read_stm32_log)
+        self.create_timer(2.0, self._read_stm32_log)
 
     def destroy_node(self):
         if hasattr(self, 'ser') and self.ser.is_open:
@@ -162,7 +162,7 @@ class MotorBridge(Node):
             if any(k in text for k in self._STM32_LOG_KEYS):
                 self.get_logger().warn(f'STM32: {text}')
             elif 'thr=' in text:
-                self.get_logger().warn(f'STM32-PWM: {text}')
+                self.get_logger().debug(f'STM32-PWM: {text}')
         if len(self._stm32_rx_buf) > 512:  # 无换行时防 buffer 膨胀
             self._stm32_rx_buf = self._stm32_rx_buf[-256:]
 

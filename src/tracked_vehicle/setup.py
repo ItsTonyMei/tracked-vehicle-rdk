@@ -11,7 +11,7 @@ launch_files = glob(os.path.join(_pkg_root, 'launch', '*.py'))
 
 setup(
     name=package_name,
-    version='0.7.0',
+    version='0.9.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',

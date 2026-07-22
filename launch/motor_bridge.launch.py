@@ -27,7 +27,7 @@ def generate_launch_description():
         DeclareLaunchArgument('serial_port', default_value='/dev/stm32_board'),
         DeclareLaunchArgument('serial_baud', default_value='115200'),
         DeclareLaunchArgument('linear_gain', default_value='1000.0'),
-        DeclareLaunchArgument('angular_gain', default_value='600.0'),
+        DeclareLaunchArgument('angular_gain', default_value='450.0'),
         DeclareLaunchArgument('steering_invert', default_value='true'),
         DeclareLaunchArgument('cmd_timeout_s', default_value='60.0'),
 
