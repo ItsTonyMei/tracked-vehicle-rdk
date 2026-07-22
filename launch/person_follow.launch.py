@@ -118,7 +118,15 @@ def generate_launch_description():
                      'action_duration_s': 3.0,
                      'follow_vel_fast': 0.8,
                      'follow_vel_back': -0.3,
-                     'follow_dist_far_m': 3.0}])
+                     'follow_dist_far_m': 3.0,
+                     'k_angular': 0.4,
+                     'k_angular_damping': 1.2,
+                     'angular_deadband_m': 0.05,
+                     'angular_lpf_alpha': 0.25,
+                     'back_enter_m': 0.85,
+                     'back_exit_m': 1.0,
+                     'back_vel_floor': -0.15,
+                     'k_ff_approach': 1.2}])
 
     # ── 11. LiDAR ──────────────────────────────────────
     lidar = IncludeLaunchDescription(PythonLaunchDescriptionSource([

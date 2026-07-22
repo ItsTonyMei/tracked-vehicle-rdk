@@ -156,7 +156,7 @@ WFLY RF209S 实测: raw 352 (min) ~ 1024 (center) ~ 1695 (max)
 | 6 | `CKSUM` | `(A5+FA+00+TYPE+CMD+00) & 0xFF` |
 | 7 | `0xFB` | 帧尾 |
 
-### 命令词协议表 (14 条, V01843 固件)
+### 命令词协议表 (16 条, V6 固件 2026-07-22)
 
 格式: `命令词 : 识别帧(模块→X5) : 应答帧(X5→模块)`
 
@@ -165,8 +165,8 @@ WFLY RF209S 实测: raw 352 (min) ~ 1024 (center) ~ 1695 (max)
 | 你好瓦力 | 0x01 | `A5 FA 00 81 01 00 21 FB` | `A5 FA 00 82 01 00 22 FB` |
 | `<欢迎语>` | 0x02 | — | `A5 FA 00 82 02 00 23 FB` |
 | `<休息语>` | 0x03 | — | `A5 FA 00 82 03 00 24 FB` |
-| 增大音量 | 0x04 | `A5 FA 00 81 04 00 24 FB` | `A5 FA 00 82 04 00 25 FB` |
-| 减小音量 | 0x05 | `A5 FA 00 81 05 00 25 FB` | `A5 FA 00 82 05 00 26 FB` |
+| **锁定跟随者 (V6)** | 0x04 | `A5 FA 00 81 04 00 24 FB` | `A5 FA 00 82 04 00 25 FB` |
+| **解除跟随者 (V6)** | 0x05 | `A5 FA 00 81 05 00 25 FB` | `A5 FA 00 82 05 00 26 FB` |
 | 小车停车/停止 | 0x06 | `A5 FA 00 81 06 00 26 FB` | `A5 FA 00 82 06 00 27 FB` |
 | 小车前进 | 0x07 | `A5 FA 00 81 07 00 27 FB` | `A5 FA 00 82 07 00 28 FB` |
 | 小车后退 | 0x08 | `A5 FA 00 81 08 00 28 FB` | `A5 FA 00 82 08 00 29 FB` |
@@ -178,18 +178,26 @@ WFLY RF209S 实测: raw 352 (min) ~ 1024 (center) ~ 1695 (max)
 | 别跟我/关闭跟随 | 0x0E | `A5 FA 00 81 0E 00 2E FB` | `A5 FA 00 82 0E 00 2F FB` |
 
 > 每个 CMD 支持多个中文命令词 (如 停止=停车=停止前进).
-> motion_arbiter 仅处理 CMD 0x06-0x0E (运动+跟随), 音量/唤醒由模块端固件管理.
+> **V6 变更**: 0x04/0x05 从音量控制变更为跟随目标锁定/解除.
+>   - 手势锁/解锁在 FOLLOWING 模式下自动触发 CI1302 播报 0x04/0x05 (语音确认).
+>   - 语音"锁定跟随者"/"解除跟随者"反向上报 → motion_arbiter 转发至 `/voice_gesture_cmd` → perception_node 执行等效手势操作.
+> motion_arbiter 处理 CMD 0x04-0x0E (锁定+运动+跟随).
 > 完整固件及刷机工具见 `ci1302_firmware/sfw*/`.
 
 ### 固件
 
-- 版本: CI1302 V01843 (内部RC + 关闭波特率校准)
+- 版本: CI1302 V6 (2026-07-22, 基于 V01843 SDK, 内部RC + 关闭波特率校准)
 - 唤醒词: 独立 DNN 模型门控 (`USE_SEPARATE_WAKEUP_EN=1`)
-- 文件: `ci1302_firmware/CI1302_chinese_1mic_V01843_UART1_115200_2M.bin`
+- 文件: `ci1302_firmware/sfw20260722104324158193959/CI1302_chinese_1mic_V01843_UART1_115200_2M.bin`
+- 播报内容: 0x04="锁定成功，开始跟随", 0x05="锁定已解除，停止跟随"
 
 ### 实现参考
 
-X5 端节点: `motion_arbiter.py` (`_TYPE_FROM_CI1302=0x81`, `_TYPE_TO_CI1302=0x82`)
+X5 端节点:
+- `motion_arbiter.py`: CI1302 串口收发 (`_TYPE_FROM_CI1302=0x81`, `_TYPE_TO_CI1302=0x82`)
+  - 手势锁/解锁 → 自动播报 0x04/0x05 (仅在 FOLLOWING 模式, 二次语音确认)
+  - 语音"锁定跟随者"/"解除跟随者" → `/voice_gesture_cmd` (Int32: 1=lock, 0=unlock)
+- `perception_node.py`: 订阅 `/voice_gesture_cmd`, 执行等效手势锁/解锁 (锁定最近行人)
 
 ---
 

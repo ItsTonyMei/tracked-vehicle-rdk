@@ -53,6 +53,8 @@ class State(enum.IntEnum):
 class MotionArbiter(Node):
 
     CMD_MAP = {
+        0x04: ('LOCK_TARGET',   None),   # V6: 锁定跟随者 (gesture→voice feedback)
+        0x05: ('RELEASE_TARGET', None),  # V6: 解除跟随者 (gesture→voice feedback)
         0x06: ('STOP',        (0.0,  0.0,  0.0)),
         0x07: ('FORWARD',     (0.5,  0.0,  0.0)),
         0x08: ('BACKWARD',    (-0.3,  0.0,  0.0)),
@@ -85,6 +87,18 @@ class MotionArbiter(Node):
         self._vel_slow = self.declare_parameter('follow_vel_slow', 0.2).value
         self._vel_back = self.declare_parameter('follow_vel_back', -0.3).value
 
+        # ── 横向 PD 控制参数 ──
+        self._k_angular = self.declare_parameter('k_angular', 0.4).value
+        self._k_angular_d = self.declare_parameter('k_angular_damping', 1.2).value
+        self._angular_deadband = self.declare_parameter('angular_deadband_m', 0.05).value
+        self._angular_lpf = self.declare_parameter('angular_lpf_alpha', 0.25).value
+
+        # ── 后退迟滞 + EKF 前馈参数 ──
+        self._back_enter_m = self.declare_parameter('back_enter_m', 0.85).value
+        self._back_exit_m = self.declare_parameter('back_exit_m', 1.0).value
+        self._back_vel_floor = self.declare_parameter('back_vel_floor', -0.15).value
+        self._k_ff_approach = self.declare_parameter('k_ff_approach', 1.2).value
+
         self._state = State.VOICE_MANUAL
         self._last_cmd_ts = 0.0
         self._last_cmd_id = None
@@ -92,10 +106,19 @@ class MotionArbiter(Node):
         self._body_track_msg = None
         self._body_track_ts = 0.0
 
-        # ── LiDAR 锁目标 (来自 perception_node, Point: x=距离, y=侧向偏移) ──
+        # ── LiDAR 锁目标 (来自 perception_node, Point: x=距离, y=侧向偏移, z=EKF逼近速度) ──
         self._locked_dist = float('nan')
         self._locked_y = 0.0
+        self._locked_vx = 0.0    # EKF vx: <0=人在靠近 (前馈用)
         self._locked_dist_ts = 0.0
+
+        # ── PD 横向控制状态 ──
+        self._prev_y = 0.0
+        self._prev_y_dot = 0.0
+        self._prev_angular_z = 0.0
+
+        # ── 后退迟滞状态 ──
+        self._was_backing = False
 
         # ── 锁定人物 ID (来自 perception_node, -1=无锁) ──
         self._locked_id = None
@@ -114,6 +137,8 @@ class MotionArbiter(Node):
             Int32, '/locked_track_id', self._on_locked_track_id, 10)
         self._sub_emergency = self.create_subscription(
             Bool, '/emergency_stop', self._on_emergency_stop, 10)
+        self._voice_gesture_pub = self.create_publisher(
+            Int32, '/voice_gesture_cmd', 10)  # V6: voice→gesture relay
         self._emergency_stop = False
 
         try:
@@ -130,6 +155,7 @@ class MotionArbiter(Node):
 
         self._timer = self.create_timer(0.2, self._poll)         # CI1302 串口轮询
         self._action_timer = self.create_timer(0.1, self._publish_action)  # 语音动作独立重发 10Hz
+        self._follow_timer = self.create_timer(0.05, self._follow_timer_cb)  # 跟随速度 20Hz (不依赖 body_track)
         self._follow_pub.publish(Bool(data=False))
         self.get_logger().info('Motion arbiter ready — VOICE_MANUAL mode')
 
@@ -178,14 +204,32 @@ class MotionArbiter(Node):
     def _on_locked_target(self, msg: Point):
         self._locked_dist = msg.x
         self._locked_y = msg.y
+        self._locked_vx = msg.z  # EKF 逼近速度: <0=人在靠近 (前馈补偿)
         self._locked_dist_ts = self.get_clock().now().nanoseconds / 1e9
 
     def _on_locked_track_id(self, msg: Int32):
-        self._locked_id = msg.data if msg.data >= 0 else None
+        prev_id = self._locked_id
+        new_id = msg.data if msg.data >= 0 else None
+        self._locked_id = new_id
         if self._locked_id is None:
             self._locked_dist = float('nan')
             self._locked_y = 0.0
             self._locked_dist_ts = 0.0
+
+        # ── CI1302 语音反馈: FOLLOWING 模式下手势锁/解锁 → 播报确认 ──
+        if self._state != State.FOLLOWING or new_id == prev_id:
+            return
+        if new_id is not None:
+            # 锁定 / 切换目标 → 播报 "锁定跟随者"
+            self._write_cmd(0x04)
+            tag = f'#{new_id}'
+            if prev_id is not None:
+                tag = f'#{prev_id}→#{new_id}'
+            self.get_logger().info(f'CI1302: lock feedback → {tag}')
+        else:
+            # 解除锁定 → 播报 "解除跟随者"
+            self._write_cmd(0x05)
+            self.get_logger().info(f'CI1302: release feedback ← #{prev_id}')
 
     def _on_emergency_stop(self, msg: Bool):
         if msg.data and not self._emergency_stop:
@@ -196,19 +240,39 @@ class MotionArbiter(Node):
         self._emergency_stop = msg.data
 
     def _distance_to_linear_vel(self, dist_m):
-        """LiDAR 融合距离 → 线速度 (连续映射, 无跳变).
+        """LiDAR 融合距离 → 线速度 (连续映射 + EKF 前馈 + 后退迟滞).
 
-        返回 None 表示无可用距离, 调用方应回退到 bbox 判定."""
+        返回 None 表示无可用距离, 调用方应回退到 bbox 判定.
+
+        后退迟滞: 进入后退 < back_enter_m, 退出 > back_exit_m (Schmitt trigger).
+        EKF 前馈: 人在靠近 (vx<0) → 提前增加后退量, 补偿 LiDAR 延迟.
+        速度地板: 后退不低于 back_vel_floor, 克服履带车静摩擦."""
         if dist_m is None or not math.isfinite(dist_m) or dist_m <= 0:
             return None
-        if dist_m < self._dist_min:              # < 0.7m
-            return self._vel_back                # 后退
-        if dist_m < self._dist_min + 0.15:       # 0.70-0.85m: 过渡区
-            ratio = (dist_m - self._dist_min) / 0.15
-            return self._vel_back * (1.0 - ratio)  # 后退 → 停止
-        if dist_m < self._dist_near:              # 0.85-1.2m: 合适范围
+
+        # ── 后退区 (迟滞 + 前馈 + 地板) ──
+        in_back_zone = dist_m < self._back_enter_m
+        if in_back_zone or (self._was_backing and dist_m < self._back_exit_m):
+            self._was_backing = True
+            # 0.5m → 全速后退, _back_enter_m → 速度地板 (graduated)
+            if dist_m < 0.5:
+                vel = float(self._vel_back)
+            else:
+                ratio = (dist_m - 0.5) / (self._back_enter_m - 0.5)
+                vel = self._vel_back * (1.0 - ratio)  # -0.3→~0
+            # 地板: 不低于 _back_vel_floor (-0.15), 克服静摩擦
+            vel = min(vel, self._back_vel_floor)
+            # EKF 前馈: 人在靠近时增加后退量
+            if math.isfinite(self._locked_vx) and self._locked_vx < -0.1:
+                vel += self._k_ff_approach * self._locked_vx  # vx<0 → vel 更负
+            return max(vel, self._vel_back * 1.5)  # 上限: 不超 1.5x max_back
+        self._was_backing = False
+
+        # ── 停止区 (back_exit_m ~ dist_near) ──
+        if dist_m < self._dist_near:              # 1.0-1.2m: 合适, 停止
             return 0.0
-        if dist_m < self._dist_far:               # 1.2-3.0m: 加速区
+        # ── 前进加速区 (1.2-3.0m) ──
+        if dist_m < self._dist_far:
             ratio = (dist_m - self._dist_near) / (self._dist_far - self._dist_near)
             return self._vel_slow * ratio + (self._vel_fast - self._vel_slow) * ratio * ratio
         return self._vel_fast                     # ≥ 3.0m: 全速
@@ -219,6 +283,10 @@ class MotionArbiter(Node):
     def _on_body_track(self, msg: Twist):
         self._body_track_msg = msg
         self._body_track_ts = self.get_clock().now().nanoseconds / 1e9
+
+    def _follow_timer_cb(self):
+        """20Hz: 跟随模式独立定时器, 不依赖 body_track 消息到达.
+        防止近距相机遮挡时 body_track 停发导致车辆僵死."""
         if self._state == State.FOLLOWING and self._last_cmd_id is None:
             self._publish_following_vel()
 
@@ -226,7 +294,7 @@ class MotionArbiter(Node):
         """FOLLOWING 模式运动发布: 必须有 OK 手势锁定的人才能跟随.
 
         未锁定时: 即使 FOLLOWING 模式激活, 也输出零速 — 车辆原地等待锁定.
-        两路数据各自有 1s staleness 保护."""
+        LiDAR 优先, 0.3s staleness. PD 横向控制 + EKF 前馈后退."""
         now = self.get_clock().now().nanoseconds / 1e9
         out = Twist()
 
@@ -241,17 +309,34 @@ class MotionArbiter(Node):
 
         bt_msg = self._body_track_msg
         bt_fresh = (bt_msg is not None and
-                    (now - self._body_track_ts) < 1.0)
+                    (now - self._body_track_ts) < 0.3)
         lidar_fresh = (math.isfinite(self._locked_dist) and
-                       (now - self._locked_dist_ts) < 1.0)
+                       (now - self._locked_dist_ts) < 0.3)
 
-        # 角速度: 优先 LiDAR 侧向偏移, fallback body_track 居中
+        # ── 角速度: PD 控制 (LiDAR 侧向偏移优先, body_track fallback) ──
         if lidar_fresh and math.isfinite(self._locked_y):
-            out.angular.z = -0.5 * self._locked_y
+            y = self._locked_y
+            # 死区: |y| < 5cm → 不修正
+            if abs(y) < self._angular_deadband:
+                raw_z = 0.0
+            else:
+                # 数值微分 + 低通滤波
+                dt = max(now - self._locked_dist_ts, 0.01)
+                raw_dot = (y - self._prev_y) / dt
+                y_dot = (self._angular_lpf * raw_dot +
+                         (1.0 - self._angular_lpf) * self._prev_y_dot)
+                self._prev_y_dot = y_dot
+                # PD: angular = -(k_p * y + k_d * y_dot)
+                raw_z = -(self._k_angular * y + self._k_angular_d * y_dot)
+            # 输出低通滤波 (平滑 10Hz →
+            out.angular.z = (self._angular_lpf * raw_z +
+                             (1.0 - self._angular_lpf) * self._prev_angular_z)
+            self._prev_y = y
+            self._prev_angular_z = out.angular.z
         elif bt_fresh:
             out.angular = bt_msg.angular
 
-        # 线速度: 优先 LiDAR 距离映射, fallback body_track
+        # ── 线速度: LiDAR 距离映射 (含 EKF 前馈 + 后退迟滞) ──
         if lidar_fresh:
             vel = self._distance_to_linear_vel(self._locked_dist)
             if vel is not None:
@@ -328,6 +413,16 @@ class MotionArbiter(Node):
         if now - self._last_voice_ts < 0.5:
             return
         self._last_voice_ts = now
+
+        if cmd_id == 0x04:  # LOCK_TARGET (V6: 语音"锁定跟随者" → 锁定最近行人)
+            self._voice_gesture_pub.publish(Int32(data=1))
+            self.get_logger().info('VOICE: LOCK_TARGET → relay to perception')
+            return
+
+        if cmd_id == 0x05:  # RELEASE_TARGET (V6: 语音"解除跟随者" → 解除锁定)
+            self._voice_gesture_pub.publish(Int32(data=0))
+            self.get_logger().info('VOICE: RELEASE_TARGET → relay to perception')
+            return
 
         if cmd_id == 0x0D:  # FOLLOW_ON
             if self._state != State.FOLLOWING:

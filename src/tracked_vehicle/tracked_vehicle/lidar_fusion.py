@@ -239,7 +239,7 @@ class FusionEngine:
 
     MAX_OBS_TRACKS = 15
 
-    PERSON_STALE_MAX = 30   # 人物: 3s 超时 (容忍姿势变换导致短暂丢腿)
+    PERSON_STALE_MAX = 15   # 人物: 1.5s 超时 (was 30=3s, 更快恢复异常 track)
     OBS_STALE_MAX    = 5    # 障碍物: 0.5s 超时 (快速清理)
 
     def __init__(self, cam_hfov_deg=72.0):

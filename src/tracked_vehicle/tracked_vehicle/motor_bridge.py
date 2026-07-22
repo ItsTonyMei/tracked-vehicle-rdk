@@ -41,7 +41,7 @@ class MotorBridge(Node):
         baud = self.declare_parameter('serial_baud', 115200).value
 
         self.linear_gain = self.declare_parameter('linear_gain', 1000.0).value
-        self.angular_gain = self.declare_parameter('angular_gain', 600.0).value
+        self.angular_gain = self.declare_parameter('angular_gain', 450.0).value
         self.steering_invert = self.declare_parameter('steering_invert', True).value
         self.pwm_center = 1500
         self.pwm_min = 1000

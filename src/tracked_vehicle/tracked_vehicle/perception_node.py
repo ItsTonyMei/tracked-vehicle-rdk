@@ -46,6 +46,8 @@ class PerceptionNode(Node):
         self._VOTE_THRESHOLD = self.declare_parameter('gesture_vote_threshold', 15).value
         self._ok_cooldown_s = self.declare_parameter('ok_cooldown_s', 3.0).value
         self._lost_hold_s = self.declare_parameter('lost_hold_s', 5.0).value
+        self._lost_reid_min_s = self.declare_parameter('lost_reid_min_s', 1.0).value
+        self._reid_max_dist_px = self.declare_parameter('reid_max_dist_px', 80.0).value
         self._empty_reset_s = self.declare_parameter('empty_reset_s', 10.0).value
         self._max_det_age_s = self.declare_parameter('max_det_age_s', 0.5).value
         self._cam_hfov_deg = self.declare_parameter('cam_hfov_deg', 72.0).value  # SC132GS rotation=90 → 72°
@@ -101,6 +103,8 @@ class PerceptionNode(Node):
         self.sub_follow = self.create_subscription(
             Bool, '/follow_active', self.follow_cb, 10)
         self._follow_active = False
+        self._sub_voice_gesture = self.create_subscription(
+            Int32, '/voice_gesture_cmd', self._on_voice_gesture_cmd, 10)  # V6: CI1302→gesture relay
         qos_scan = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT)
         self.sub_scan = self.create_subscription(
             LaserScan, '/scan', self.scan_cb, qos_scan)
@@ -293,14 +297,18 @@ class PerceptionNode(Node):
             else:
                 if self._lost_since == 0.0:
                     self._lost_since = now
-                if self._last_known_cx is not None:
-                    matched_id, dist = self._find_nearest_body(
-                        msg, self._last_known_cx, self._last_known_cy, 150.0)
-                    if matched_id is not None:
-                        self.get_logger().info(
-                            f'RE-ID #{self._locked_id} -> #{matched_id} (dist={dist:.0f}px)')
-                        self._locked_id = matched_id
-                        self._lost_since = 0.0
+                # HOLDING: 等待 _lost_reid_min_s 后才尝试 RE-ID,
+                # 防止单帧丢失即把锁切换到旁边的另一个人
+                if now - self._lost_since >= self._lost_reid_min_s:
+                    if self._last_known_cx is not None:
+                        matched_id, dist = self._find_nearest_body(
+                            msg, self._last_known_cx, self._last_known_cy,
+                            self._reid_max_dist_px)
+                        if matched_id is not None:
+                            self.get_logger().info(
+                                f'RE-ID #{self._locked_id} -> #{matched_id} (dist={dist:.0f}px)')
+                            self._locked_id = matched_id
+                            self._lost_since = 0.0
                 if self._lost_since > 0.0 and now - self._lost_since > self._lost_hold_s:
                     self.get_logger().info(
                         f'#{self._locked_id} 消失 >{self._lost_hold_s:.0f}s, 解除锁定')
@@ -379,6 +387,56 @@ class PerceptionNode(Node):
         self._gesture_ts = now
         self._flash = 15
         self._flash_color = (0, 255, 0)
+
+    # ═══════════════════════════════════════════════════════════════
+    # V6: CI1302 语音命令 → 手势等效操作
+
+    def _on_voice_gesture_cmd(self, msg: Int32):
+        """CI1302 语音"锁定跟随者"/"解除跟随者" → 等效手势操作.
+        data=1: 锁定最近行人 (等效 OK 手势)
+        data=0: 解除当前锁定 (等效 Palm 手势)"""
+        now = self.get_clock().now().nanoseconds / 1e9
+        if msg.data == 0:  # Unlock
+            if self._locked_id is not None:
+                self.get_logger().info(f'VOICE GESTURE: unlock #{self._locked_id}')
+                self._locked_id = None
+                self._lost_since = 0.0
+                self._gesture_ts = now
+                self._flash = 15
+                self._flash_color = (0, 255, 0)
+        elif msg.data == 1:  # Lock nearest person
+            if self._targets is None or not self._has_body(self._targets):
+                self.get_logger().warn('VOICE GESTURE: no person detected to lock')
+                return
+            # 锁定画面中面积最大 (最近) 的行人
+            best_id = None
+            best_area = 0
+            for t in self._targets.targets:
+                if t.type != 'person':
+                    continue
+                r = _find_body_roi(t)
+                if r is None:
+                    continue
+                area = r.width * r.height
+                if area > best_area:
+                    best_area = area
+                    best_id = t.track_id
+            if best_id is None:
+                self.get_logger().warn('VOICE GESTURE: no valid body ROI found')
+                return
+            old_id = self._locked_id
+            if best_id == old_id:
+                self.get_logger().info(f'VOICE GESTURE: already locked #{best_id}')
+                return
+            self._locked_id = best_id
+            self._lost_since = 0.0
+            self._gesture_ts = now
+            self._flash = 15
+            self._flash_color = (0, 0, 255)
+            if old_id is None:
+                self.get_logger().info(f'VOICE GESTURE: lock #{best_id}')
+            else:
+                self.get_logger().info(f'VOICE GESTURE: switch #{old_id}→#{best_id}')
 
     # ═══════════════════════════════════════════════════════════════
     # 系统状态读取
@@ -482,11 +540,14 @@ class PerceptionNode(Node):
             self._scan, self._targets, orig_w, now)
         holding = (self._locked_id is not None and self._lost_since > 0.0)
 
-        # ── 发布锁定目标距离 + 侧向偏移 + track_id ──
+        # ── 发布锁定目标距离 + 侧向偏移 + EKF逼近速度 + track_id ──
         if self._locked_id is not None and self._locked_id in self._fused:
             fd = self._fused[self._locked_id]
+            # EKF 速度前馈: vx<0 表示人在靠近, 供 motion_arbiter 预判后退
+            ekf = self._fusion._tracks.get(self._locked_id)
+            ekf_vx = float(ekf.state['vx']) if ekf else 0.0
             self._locked_target_pub.publish(
-                Point(x=float(fd['dist']), y=float(fd.get('y', 0.0)), z=0.0))
+                Point(x=float(fd['dist']), y=float(fd.get('y', 0.0)), z=ekf_vx))
         else:
             self._locked_target_pub.publish(Point(x=float('nan'), y=0.0, z=0.0))
 
@@ -497,9 +558,21 @@ class PerceptionNode(Node):
 
         # ── 障碍物紧急停止检测 ──
         emergency = False
+        # 被锁人的角度 (用于豁免: 靠近的锁目标不应触发急停)
+        locked_angle = None
+        if (self._locked_id is not None and
+            self._locked_id in self._fused):
+            fd_locked = self._fused[self._locked_id]
+            locked_angle = abs(math.degrees(math.atan2(
+                fd_locked['y'], fd_locked['x'])))
         for tid, fd in self._fused.items():
             if tid >= 0:
                 continue
+            # 跳过被锁人附近的障碍物 (人在靠近 → 前进/后退中, 非障碍)
+            if locked_angle is not None:
+                obs_ang = abs(math.degrees(math.atan2(fd['y'], fd['x'])))
+                if abs(obs_ang - locked_angle) < 15.0:
+                    continue
             if fd['dist'] < 0.5:
                 obs_angle = abs(math.degrees(math.atan2(fd['y'], fd['x'])))
                 if obs_angle < 15.0:

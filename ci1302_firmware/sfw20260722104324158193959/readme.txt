@@ -11,8 +11,6 @@
 
 The firmware communication protocol is as follows:
 你好瓦力:A5 FA 00 81 01 00 21 FB:A5 FA 00 82 01 00 22 FB
-增大音量:A5 FA 00 81 04 00 24 FB:A5 FA 00 82 04 00 25 FB
-减小音量:A5 FA 00 81 05 00 25 FB:A5 FA 00 82 05 00 26 FB
 小车停车:A5 FA 00 81 06 00 26 FB:A5 FA 00 82 06 00 27 FB
 小车停止:A5 FA 00 81 06 00 26 FB:A5 FA 00 82 06 00 27 FB
 小车停止前进:A5 FA 00 81 06 00 26 FB:A5 FA 00 82 06 00 27 FB
@@ -38,3 +36,5 @@ The firmware communication protocol is as follows:
 结束跟随:A5 FA 00 81 0E 00 2E FB:A5 FA 00 82 0E 00 2F FB
 <欢迎语>:A5 FA 00 81 02 00 22 FB:A5 FA 00 82 02 00 23 FB
 <休息语>:A5 FA 00 81 03 00 23 FB:A5 FA 00 82 03 00 24 FB
+<锁定跟随者>:A5 FA 00 81 04 00 24 FB:A5 FA 00 82 04 00 25 FB
+<解除跟随者>:A5 FA 00 81 05 00 25 FB:A5 FA 00 82 05 00 26 FB
