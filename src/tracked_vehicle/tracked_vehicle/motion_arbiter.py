@@ -46,6 +46,11 @@ import serial
 import time
 import math
 import enum
+import logging
+
+from .tts_engine import TTSEngine
+
+_log = logging.getLogger('motion_arbiter')
 
 
 class State(enum.IntEnum):
@@ -152,7 +157,7 @@ class MotionArbiter(Node):
             time.sleep(0.8)
             self._ser.flushInput()
 
-        self._welcome_played = self._ser is None  # no CI1302 → skip welcome wait
+        self._welcome_played = False
 
         self._timer = self.create_timer(0.2, self._poll)         # CI1302 串口轮询
         self._action_timer = self.create_timer(0.1, self._publish_action)  # 语音动作独立重发 10Hz
@@ -172,10 +177,18 @@ class MotionArbiter(Node):
             return
         self._welcome_played = True
         self._write_cmd(0x02)
+        self._speak_tts('系统已就绪')
         self.get_logger().info('Welcome triggered — ALL SYSTEMS GO')
 
     # ═════════════════════════════════════════════════════════════
     # 串口
+
+    def _speak_tts(self, text):
+        """TTS 播报 (M30 USB 扬声器, 非阻塞后台线程)."""
+        try:
+            TTSEngine.get().speak(text)
+        except Exception as e:
+            self.get_logger().warn(f'TTS speak failed: {e}')
 
     def _write_cmd(self, cmd_id):
         if self._ser is None:
@@ -221,24 +234,27 @@ class MotionArbiter(Node):
             self._locked_y = 0.0
             self._locked_dist_ts = 0.0
 
-        # ── CI1302 语音反馈: 任意模式下手势锁/解锁 → 播报确认 ──
+        # ── 语音反馈: 任意模式下手势锁/解锁 → TTS + CI1302 播报确认 ──
         if new_id == prev_id:
             return
         if new_id is not None:
-            # 锁定 / 切换目标 → 播报 "锁定跟随者"
+            # 锁定 / 切换目标
             self._write_cmd(0x04)
+            self._speak_tts('已锁定跟随者')
             tag = f'#{new_id}'
             if prev_id is not None:
                 tag = f'#{prev_id}→#{new_id}'
-            self.get_logger().info(f'CI1302: lock feedback → {tag}')
+            self.get_logger().info(f'lock feedback → {tag}')
         else:
-            # 解除锁定 → 播报 "解除跟随者"
+            # 解除锁定
             self._write_cmd(0x05)
-            self.get_logger().info(f'CI1302: release feedback ← #{prev_id}')
+            self._speak_tts('已解除跟随者')
+            self.get_logger().info(f'release feedback ← #{prev_id}')
 
     def _on_emergency_stop(self, msg: Bool):
         if msg.data and not self._emergency_stop:
             self.get_logger().warn('EMERGENCY STOP: detected - zero vel NOW')
+            self._speak_tts('急停')
             self._publish_vel('E-STOP', self._STOP_VEL)
             self._last_cmd_id = None
             self._last_cmd_vel = None
@@ -430,11 +446,12 @@ class MotionArbiter(Node):
                 self._follow_pub.publish(Bool(data=True))
                 self._last_cmd_id = None
                 self._last_cmd_vel = None
+                self._speak_tts('进入跟随模式')
                 # 已锁定时进入跟随 → 触发锁定语音确认
                 if self._locked_id is not None:
                     self._write_cmd(0x04)
                     self.get_logger().info(
-                        f'CI1302: lock feedback (FOLLOW entry) → #{self._locked_id}')
+                        f'lock feedback (FOLLOW entry) → #{self._locked_id}')
                 self.get_logger().info('VOICE: FOLLOW_ON → FOLLOWING mode')
             return
 
@@ -443,7 +460,8 @@ class MotionArbiter(Node):
             if self._locked_id is not None:
                 self._write_cmd(0x05)
                 self.get_logger().info(
-                    f'CI1302: release feedback (FOLLOW exit) ← #{self._locked_id}')
+                    f'release feedback (FOLLOW exit) ← #{self._locked_id}')
+            self._speak_tts('退出跟随模式')
             self._exit_following('VOICE: FOLLOW_OFF')
             return
 
