@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] - 2026-07-27
+
+### Added
+
+- **M30 USB 桌面扬声器** — Edifier M30 替代 CI1302 内置喇叭, piper-tts 离线中文 TTS 播报
+- **piper-tts 中文语音合成** — `zh_CN-huayan-medium` 神经网络模型 (61MB), 2.5W×2 立体声输出
+- **TTS 事件接入** — 系统就绪/锁定/解锁/急停/跟随模式切换共 5 处关键事件语音反馈
+- **HDMI WiFi 状态指示** — 右上角信号图标 (绿/黄/红三色弧) + SSID 名称
+- **`voice_asr` 节点** — Vosk 离线中文 ASR 实验节点 (arecord 管道 → 状态机 → /voice_cmd)
+- **CI1302 V7 固件** — 被动播报模式, 模块不再自行播放, 由 M30 统一负责语音输出
+
+### Changed
+
+- **CI1302 静默化** — 移除 motion_arbiter 全部 6 处 CI1302 应答帧, 仅接收识别帧 (TYPE=0x81)
+- **语音架构重构** — CI1302 负责 ASR 输入, M30 负责 TTS 输出, 各司其职
+- **CI1302 优雅降级** — 串口打开失败时不再崩溃, 以无语音模式运行
+- **`tts_engine.py`** — 多后端架构 (piper/espeak 双后端, 自动降级)
+
+### Fixed
+
+- **WiFi 断连不复连** — NM `wifi.powersave=3→2`, 禁用省电模式
+- **串口设备映射** — CI1302 拔插后 ttyUSB 序号漂移, udev 规则按 VID/PID 匹配
+
 ## [0.9.0] - 2026-07-22
 
 ### Added

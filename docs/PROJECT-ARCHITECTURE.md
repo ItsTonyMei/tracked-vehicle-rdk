@@ -12,7 +12,8 @@
 | 摄像头 | GS130W (SC132GS, 1.75mm 广角) | 960×544 @ 60fps, 人体/手势检测 |
 | 激光雷达 | YDLidar T-mini Plus | 360° @ 10Hz, 430pts, 测距融合 |
 | 下位机 | STM32F103RCT6 (V3.0 扩展板) | SBUS 遥控器 + MotorCmd → ESC PWM |
-| 语音模块 | CI1302 (V01843 固件) | 离线中文语音识别 → UART 命令 |
+| 语音模块 | CI1302 (V7 固件, 被动播报) | 离线中文语音识别 → UART 命令 (仅输入) |
+| 扬声器 | Edifier M30 (USB Audio) | piper-tts 离线中文 TTS 播报 (输出) |
 | 车体 | 6WD 重型履带车 | ZTW Seal G2 ESC, 1500μs 中位 PWM |
 
 ### 传感器安装

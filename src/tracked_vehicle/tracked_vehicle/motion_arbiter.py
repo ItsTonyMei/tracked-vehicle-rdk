@@ -3,14 +3,16 @@
 motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
 
 职责:
-  1. CI1302 V6 语音识别 -> 运动命令 + FOLLOW/STOP + 锁/解锁 relay
-  2. FOLLOW 模式: /locked_target(Point: dist+y+vx) 覆写速度
+  1. CI1302 V7 ASR 输入 -> 运动命令 + FOLLOW/STOP + 锁/解锁 relay
+     (模块被动播报, 仅发识别帧 TYPE=0x81, 不自播)
+  2. M30 + piper-tts TTS 输出 -> 系统就绪/锁定/解锁/急停/模式切换语音反馈
+  3. FOLLOW 模式: /locked_target(Point: dist+y+vx) 覆写速度
      - LiDAR 距离 -> 连续速度映射 (Schmitt 迟滞后退 + EKF vx 前馈)
      - LiDAR 侧向 -> P + LPF 转向 (k_p=0.4, ±5cm deadband, α=0.25)
      - fallback: body_tracking angular.z
-  3. 急停: /emergency_stop -> 立即发布零速
-  4. /cmd_vel 唯一发布者, 消除多写冲突
-  5. /system_ready 信号后欢迎语 + 手势锁/解锁 CI1302 语音确认
+  4. 急停: /emergency_stop -> 立即发布零速 + TTS 语音警告
+  5. /cmd_vel 唯一发布者, 消除多写冲突
+  6. /voice_cmd 订阅 -> Vosk ASR 节点 (备用, 当前 CI1302 承担 ASR)
 
 状态机:
   VOICE_MANUAL -> 语音运动命令 10Hz 重发 (3s 窗口)
@@ -28,13 +30,13 @@ motion_arbiter — 运动仲裁节点 (/cmd_vel 唯一发布者)
 数据流:
   感知权威  -> /locked_target (Point: x=dist, y=lat, z=EKF_vx) + /emergency_stop
   跟踪策略  -> /cmd_vel_body_track (Twist, angular fallback)
-  语音输入  -> CI1302 UART (A5 FA V6 协议: 0x04/0x05 锁/解)
+  语音输入  -> CI1302 UART (A5 FA V7 协议, 仅接收 TYPE=0x81)
   手势反馈  -> /voice_gesture_cmd (Int32, relay 至 perception_node)
+  TTS 输出  -> M30 USB 扬声器 (piper-tts 离线中文合成)
   唯一输出  -> /cmd_vel (Twist, motor_bridge 消费)
 
-协议 V6 (V01843 SDK): A5 FA 00 [TYPE] [CMD_ID] 00 [CKSUM] FB (8 bytes)
-  TYPE=0x81 CI1302->Host, TYPE=0x82 Host->CI1302
-  0x04=锁定跟随者, 0x05=解除跟随者 (V6 新增)
+协议 V7 (V01843 SDK, 被动播报): A5 FA 00 [TYPE] [CMD_ID] 00 [CKSUM] FB (8 bytes)
+  TYPE=0x81 CI1302->Host (识别), TYPE=0x82 保留但不再使用
   CKSUM = (A5+FA+00+TYPE+CMD+00) & 0xFF
 """
 
@@ -144,6 +146,8 @@ class MotionArbiter(Node):
             Bool, '/emergency_stop', self._on_emergency_stop, 10)
         self._voice_gesture_pub = self.create_publisher(
             Int32, '/voice_gesture_cmd', 10)  # V6: voice→gesture relay
+        self._sub_voice_cmd = self.create_subscription(
+            Int32, '/voice_cmd', self._on_voice_cmd, 10)  # Phase 2: Vosk ASR
         self._emergency_stop = False
 
         self._ser = None
@@ -176,7 +180,6 @@ class MotionArbiter(Node):
         if self._welcome_played:
             return
         self._welcome_played = True
-        self._write_cmd(0x02)
         self._speak_tts('系统已就绪')
         self.get_logger().info('Welcome triggered — ALL SYSTEMS GO')
 
@@ -239,7 +242,6 @@ class MotionArbiter(Node):
             return
         if new_id is not None:
             # 锁定 / 切换目标
-            self._write_cmd(0x04)
             self._speak_tts('已锁定跟随者')
             tag = f'#{new_id}'
             if prev_id is not None:
@@ -247,7 +249,6 @@ class MotionArbiter(Node):
             self.get_logger().info(f'lock feedback → {tag}')
         else:
             # 解除锁定
-            self._write_cmd(0x05)
             self._speak_tts('已解除跟随者')
             self.get_logger().info(f'release feedback ← #{prev_id}')
 
@@ -415,6 +416,15 @@ class MotionArbiter(Node):
             self._try_serial_reconnect()
 
     # ═════════════════════════════════════════════════════════════
+    # Phase 2: Vosk ASR 语音命令 (/voice_cmd Int32)
+
+    def _on_voice_cmd(self, msg: Int32):
+        """接收 voice_asr 发布的 CMD ID, 路由到现有 _on_voice 分发."""
+        cmd_id = msg.data
+        self.get_logger().info(f'VOICE ASR: cmd=0x{cmd_id:02X}')
+        self._on_voice(cmd_id)
+
+    # ═════════════════════════════════════════════════════════════
     # 语音命令分发
 
     def _on_voice(self, cmd_id):
@@ -447,18 +457,14 @@ class MotionArbiter(Node):
                 self._last_cmd_id = None
                 self._last_cmd_vel = None
                 self._speak_tts('进入跟随模式')
-                # 已锁定时进入跟随 → 触发锁定语音确认
                 if self._locked_id is not None:
-                    self._write_cmd(0x04)
                     self.get_logger().info(
                         f'lock feedback (FOLLOW entry) → #{self._locked_id}')
                 self.get_logger().info('VOICE: FOLLOW_ON → FOLLOWING mode')
             return
 
         if cmd_id == 0x0E:  # FOLLOW_OFF
-            # 退出前如有锁定 → 触发解锁语音
             if self._locked_id is not None:
-                self._write_cmd(0x05)
                 self.get_logger().info(
                     f'release feedback (FOLLOW exit) ← #{self._locked_id}')
             self._speak_tts('退出跟随模式')
@@ -467,11 +473,9 @@ class MotionArbiter(Node):
 
         if name == 'STOP':
             if self._state == State.FOLLOWING:
-                # 停止跟随前如有锁定 → 触发解锁语音
                 if self._locked_id is not None:
-                    self._write_cmd(0x05)
                     self.get_logger().info(
-                        f'CI1302: release feedback (STOP exit) ← #{self._locked_id}')
+                        f'release feedback (STOP exit) ← #{self._locked_id}')
                 self._exit_following('VOICE: STOP (exit follow)')
             else:
                 self._publish_vel('STOP', self._STOP_VEL)

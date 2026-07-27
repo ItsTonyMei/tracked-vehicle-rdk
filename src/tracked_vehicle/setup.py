@@ -11,7 +11,7 @@ launch_files = glob(os.path.join(_pkg_root, 'launch', '*.py'))
 
 setup(
     name=package_name,
-    version='0.9.0',
+    version='0.10.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -30,6 +30,7 @@ setup(
             'perception_node = tracked_vehicle.perception_node:main',
             'motion_arbiter = tracked_vehicle.motion_arbiter:main',
             'motor_bridge = tracked_vehicle.motor_bridge:main',
+            'voice_asr = tracked_vehicle.voice_asr:main',
         ],
     },
 )

@@ -16,8 +16,8 @@
 - **BPU 人体检测 + LiDAR-Camera EKF 融合测距** — mono2d_body_detection (BPU, ~60FPS) + T-mini Plus 2D LiDAR (10Hz) → 角度匹配 → 常速度 EKF → 公制距离
 - **语音仲裁跟随** — motion_arbiter 状态机 (VOICE_MANUAL / FOLLOWING) 作为 /cmd_vel 唯一发布者, LiDAR 距离覆写线速度
 - **分层安全架构** — 遥控器 SBUS 直连 STM32 最高优先级, X5 指令次之, 2s 命令超时 + IWDG 硬件看门狗兜底
-- **多传感器融合** — LiDAR 测距、AI 语音交互 (CI1302 V01843/A5FA 协议)
-- **全 ROS2 Humble + TROS 生态** — 一键 `ros2 launch tracked_vehicle person_follow.launch.py` 启动 11 节点管线
+- **离线中文语音交互** — CI1302 V7 (ASR 输入, A5 FA 协议) + M30 桌面扬声器 (piper-tts TTS 输出)
+- **全 ROS2 Humble + TROS 生态** — 一键 `ros2 launch tracked_vehicle person_follow.launch.py` 启动 12 节点管线
 
 ---
 
@@ -41,8 +41,14 @@
 └──────────────┘            │  手势锁定     │         │ 双路无刷电调       │
                             │              │         └────────┬─────────┘
 ┌──────────────┐  UART2     │              │                  │ 三相无刷
-│ CI1302 语音  │◄──────────►│              │         ┌────────▼─────────┐
-└──────────────┘            └──────┬──────┘         │ 电机L · 电机R     │
+│ CI1302 语音  │◄──识别帧───│              │         ┌────────▼─────────┐
+│ (V7 被动播报) │            │              │         │ 电机L · 电机R     │
+└──────────────┘            │              │         └──────────────────┘
+                            │              │
+┌──────────────┐  USB Audio │              │
+│ M30 桌面扬声器│◄──TTS播报──│              │
+│ (piper-tts)  │            └──────┬──────┘
+└──────────────┘                   │ VIS帧(UART3)
                                    │ VIS帧(UART3)   └──────────────────┘
 ┌──────────────┐                   │
 │ OpenMV N6 ⬜  │◄──────────────────┘
