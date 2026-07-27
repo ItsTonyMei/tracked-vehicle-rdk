@@ -141,17 +141,18 @@ class MotionArbiter(Node):
             Int32, '/voice_gesture_cmd', 10)  # V6: voice→gesture relay
         self._emergency_stop = False
 
+        self._ser = None
         try:
             self._ser = serial.Serial(port, baud, timeout=0.1)
             self.get_logger().info(f'Voice module opened: {port} @ {baud}')
-        except serial.SerialException as e:
-            self.get_logger().fatal(f'Cannot open voice port {port}: {e}')
-            raise
+        except (serial.SerialException, OSError) as e:
+            self.get_logger().warn(f'Voice module not available ({port}): {e} — running without voice')
 
-        time.sleep(0.8)
-        self._ser.flushInput()
+        if self._ser is not None:
+            time.sleep(0.8)
+            self._ser.flushInput()
 
-        self._welcome_played = False
+        self._welcome_played = self._ser is None  # no CI1302 → skip welcome wait
 
         self._timer = self.create_timer(0.2, self._poll)         # CI1302 串口轮询
         self._action_timer = self.create_timer(0.1, self._publish_action)  # 语音动作独立重发 10Hz
@@ -177,6 +178,8 @@ class MotionArbiter(Node):
     # 串口
 
     def _write_cmd(self, cmd_id):
+        if self._ser is None:
+            return
         cksum = (0xA5 + 0xFA + 0x00 + self._TYPE_TO_CI1302 + cmd_id + 0x00) & 0xFF
         frame = bytes([0xA5, 0xFA, 0x00, self._TYPE_TO_CI1302, cmd_id, 0x00, cksum, self._TAIL])
         try:
@@ -185,10 +188,12 @@ class MotionArbiter(Node):
             self._try_serial_reconnect()
 
     def _close_serial(self):
-        if hasattr(self, '_ser') and self._ser.is_open:
+        if hasattr(self, '_ser') and self._ser is not None and self._ser.is_open:
             self._ser.close()
 
     def _try_serial_reconnect(self):
+        if self._ser is None:
+            return
         try:
             if self._ser.is_open:
                 self._ser.close()
@@ -373,6 +378,8 @@ class MotionArbiter(Node):
     # CI1302 串口轮询
 
     def _poll(self):
+        if self._ser is None:
+            return
         try:
             count = self._ser.in_waiting
             if not count:

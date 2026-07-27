@@ -35,6 +35,7 @@ from geometry_msgs.msg import Point
 import cv2
 import numpy as np
 import math
+import subprocess
 
 from .lidar_fusion import FusionEngine, _find_body_roi
 
@@ -540,6 +541,8 @@ class PerceptionNode(Node):
     _sys_info = {}
     _sys_info_ts = 0.0
     _cpu_pct = 0.0
+    _wifi_info = {}
+    _wifi_info_ts = 0.0
 
     def _get_sys_info(self):
         now = self.get_clock().now().nanoseconds / 1e9
@@ -561,6 +564,37 @@ class PerceptionNode(Node):
             except Exception:
                 self._cpu_pct = 0.0
         return self._sys_info
+
+    @staticmethod
+    def _read_wifi_info():
+        """Return (ssid: str|None, signal_dbm: float|None).  ssid=None means disconnected."""
+        info = {'ssid': None, 'signal': None}
+        try:
+            r = subprocess.run(['iwgetid', '-r'], capture_output=True, text=True, timeout=2)
+            if r.returncode == 0 and r.stdout.strip():
+                info['ssid'] = r.stdout.strip()
+        except Exception:
+            pass
+        # signal via /proc/net/wireless (fast, no subprocess)
+        try:
+            with open('/proc/net/wireless') as f:
+                f.readline()  # skip header
+                f.readline()  # skip second header
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 4:
+                        info['signal'] = float(parts[3])
+                        break
+        except Exception:
+            pass
+        return info
+
+    def _get_wifi_info(self):
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now - self._wifi_info_ts > 2.0:
+            self._wifi_info = self._read_wifi_info()
+            self._wifi_info_ts = now
+        return self._wifi_info.get('ssid'), self._wifi_info.get('signal')
 
     # ═══════════════════════════════════════════════════════════════
     # 渲染
@@ -756,6 +790,46 @@ class PerceptionNode(Node):
         cv2.circle(frame, (x + self._DOT_R, row2_y), self._DOT_R, mode_dot, -1)
         cv2.putText(frame, mode_str, (x + 20, row2_y + 8),
                     self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+
+        # ── WiFi 状态 (右上角) ──
+        wifi_ssid, wifi_signal = self._get_wifi_info()
+
+        if wifi_signal is not None:
+            if wifi_signal > -55:
+                wifi_color = (0, 255, 0)      # 绿: 信号好
+            elif wifi_signal > -75:
+                wifi_color = (0, 255, 255)    # 黄: 信号中
+            else:
+                wifi_color = (0, 0, 255)      # 红: 信号差
+        else:
+            wifi_color = (100, 100, 100)      # 灰: 未连接
+
+        # SSID 文字 (右对齐, 白色与状态栏统一)
+        ssid_display = wifi_ssid if wifi_ssid else 'No WiFi'
+        (tw, th), _ = cv2.getTextSize(ssid_display, self._FONT, self._FONT_SCALE, self._FONT_THICK)
+        wifi_icon_cx = scr_w - 30
+        ssid_x = wifi_icon_cx - tw - 20
+        ssid_y = row1_y + 8
+        cv2.putText(frame, ssid_display, (ssid_x, ssid_y),
+                    self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
+
+        # WiFi 图标: 3 层同心弧 + 底部圆点
+        arc_data = [(13, 11), (8, 7), (3, 3)]  # (axes_w, axes_h)
+        # 颜色分层: 信号越好亮的弧越多
+        if wifi_signal is not None:
+            bar_alpha = [1.0, 0.7, 0.4] if wifi_signal > -55 else (
+                        [1.0, 0.7, 0.0] if wifi_signal > -75 else [1.0, 0.0, 0.0])
+        else:
+            bar_alpha = [0.3, 0.0, 0.0]
+        for i, (aw, ah) in enumerate(arc_data):
+            if bar_alpha[i] <= 0:
+                continue
+            r, g, b = wifi_color
+            arc_c = (int(r * bar_alpha[i]), int(g * bar_alpha[i]), int(b * bar_alpha[i]))
+            cv2.ellipse(frame, (wifi_icon_cx, 20), (aw, ah),
+                        0, 200, 340, arc_c, 2)
+        # 底部圆点
+        cv2.circle(frame, (wifi_icon_cx, 26), 2, wifi_color, -1)
 
         # ── 手势投票状态: 显示当前活跃码及命中数 ──
         gx = 370
