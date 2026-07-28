@@ -2,6 +2,9 @@
 """
 语音控制人体跟随 launch (GS130W rotation=90 + LiDAR 融合版)
 
+注意: X5 板端启动脚本需设置环境变量:
+  export ROS_DISABLE_LOANED_MESSAGES=1  # 禁用 TROS 零拷贝 loan, 防止共享内存池耗尽导致画面冻结
+
 传感器:
   Camera: GS130W SC132GS, 72deg HFOV, f=1.75mm 广角, rotation=90 -> 960x544 @ 60fps
   LiDAR:  YDLidar T-mini Plus, 360deg @ 10Hz, 430pts, 胸高度 ~150cm

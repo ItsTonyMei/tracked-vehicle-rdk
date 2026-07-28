@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""感知节点 — LiDAR-Camera 融合 + 手势锁定 + 障碍物急停 + HDMI 渲染
+"""感知节点 — LiDAR-Camera 融合 + 手势锁定 + 障碍物急停 + HDMI 渲染 + 冻结自愈
 
 数据职责 (单一权威源):
   - /locked_target     (Point): x=距离, y=侧向偏移, z=EKF vx 逼近速度 (前馈用)
@@ -9,6 +9,7 @@
   - JPEG 按需解码 (img_cb 60fps仅存原始字节, render 15Hz时解码)
   - fusion.update 单次调用 (去重, 15Hz predict + 10Hz 完整管线)
   - HDMI: 检测框 + LiDAR 融合距离 + 系统状态栏 + 手势投票进度条
+  - 冻结自愈: 帧 hash 不变 >15s → 自动重启 (启动60s保护期, 最多3次)
 
 传感器:
   Camera: GS130W SC132GS, 72deg HFOV @ 960x544, f=1.75mm 广角, 60fps via mono2d
@@ -628,10 +629,46 @@ class PerceptionNode(Node):
             return cv2.rotate(img, cv2.ROTATE_180)
         return img
 
+    _FRAME_FREEZE_SEC = 15.0      # 冻结超时阈值
+    _FRAME_STARTUP_GRACE = 60.0   # 启动保护期 (相机传感器稳定需要时间)
+
     def render(self):
         jpeg = self._frame_jpeg
         if jpeg is None:
             return
+
+        # ── 画面冻结检测 (RDK X5 MIPI 偶尔卡死, 启动期豁免) ──
+        now = self.get_clock().now().nanoseconds / 1e9
+        if not hasattr(self, '_first_frame_ts'):
+            self._first_frame_ts = now
+            self._restart_count = 0
+
+        if now - self._first_frame_ts > self._FRAME_STARTUP_GRACE:
+            try:
+                jpeg_hash = hash(bytes(jpeg[:1024])) if len(jpeg) > 1024 else hash(bytes(jpeg))
+            except TypeError:
+                jpeg_hash = 0
+            if not hasattr(self, '_last_frame_hash'):
+                self._last_frame_hash = jpeg_hash
+                self._last_frame_change = now
+            elif jpeg_hash and jpeg_hash == self._last_frame_hash:
+                if now - self._last_frame_change > self._FRAME_FREEZE_SEC:
+                    if self._restart_count < 3:
+                        self._restart_count += 1
+                        self.get_logger().error(
+                            f'FRAME FROZEN {now - self._last_frame_change:.0f}s '
+                            f'(#{self._restart_count}/3) — restarting')
+                        import subprocess
+                        subprocess.run(
+                            ['systemctl', 'restart', 'tracked-vehicle-display'],
+                            timeout=5)
+                        return
+                    else:
+                        self.get_logger().error(
+                            'FRAME FROZEN: max restarts (3) reached — giving up')
+            else:
+                self._last_frame_hash = jpeg_hash
+                self._last_frame_change = now
 
         # ── JPEG 解码 ──
         raw = np.frombuffer(jpeg, dtype=np.uint8)

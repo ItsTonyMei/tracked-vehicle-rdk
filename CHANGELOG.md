@@ -27,6 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **WiFi 断连不复连** — NM `wifi.powersave=3→2`, 禁用省电模式
 - **串口设备映射** — CI1302 拔插后 ttyUSB 序号漂移, udev 规则按 VID/PID 匹配
+- **HDMI 画面冻结自愈** — 启动 60s 保护期 + 帧 hash 变化检测, 冻结 >15s 自动重启服务 (最多 3 次)
+- **TTS 首次调用卡顿** — 惰性初始化在 render 线程 → 提前后台加载 ONNX 模型
+- **后退速度地板失效** — `min`→`max` 修复
+- **私有属性访问** — `_fusion._tracks` → 公开 `get_ekf_state()`
 
 ## [0.9.0] - 2026-07-22
 
