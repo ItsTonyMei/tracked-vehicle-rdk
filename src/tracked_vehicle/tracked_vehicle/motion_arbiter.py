@@ -63,8 +63,9 @@ class State(enum.IntEnum):
 class MotionArbiter(Node):
 
     CMD_MAP = {
-        0x04: ('LOCK_TARGET',   None),   # V6: 锁定跟随者 (gesture→voice feedback)
-        0x05: ('RELEASE_TARGET', None),  # V6: 解除跟随者 (gesture→voice feedback)
+        0x01: ('WAKE',          None),   # 唤醒词 — 仅 TTS 反馈
+        0x04: ('LOCK_TARGET',   None),   # 锁定跟随者
+        0x05: ('RELEASE_TARGET', None),  # 解除跟随者
         0x06: ('STOP',        (0.0,  0.0,  0.0)),
         0x07: ('FORWARD',     (0.5,  0.0,  0.0)),
         0x08: ('BACKWARD',    (-0.3,  0.0,  0.0)),
@@ -74,6 +75,20 @@ class MotionArbiter(Node):
         0x0C: ('SPIN_RIGHT',  (0.0,  0.0, -0.5)),
         0x0D: ('FOLLOW_ON',   None),
         0x0E: ('FOLLOW_OFF',  None),
+    }
+
+    # 命令 → TTS 播报文本 (用户指定, 与触发词不重复)
+    _CMD_TTS = {
+        0x01: '瓦力在',
+        0x06: '瓦力不动',
+        0x07: '瓦力向前走',
+        0x08: '瓦力正在倒车中',
+        0x09: '瓦力正在向左转',
+        0x0A: '瓦力正在向右转',
+        0x0B: '瓦力正在向左旋转',
+        0x0C: '瓦力正在向右旋转',
+        0x0D: '瓦力正在跟随',
+        0x0E: '瓦力不再跟随',
     }
 
     _STOP_VEL = (0.0, 0.0, 0.0)
@@ -167,6 +182,10 @@ class MotionArbiter(Node):
         self._action_timer = self.create_timer(0.1, self._publish_action)  # 语音动作独立重发 10Hz
         self._follow_timer = self.create_timer(0.05, self._follow_timer_cb)  # 跟随速度 20Hz (不依赖 body_track)
         self._follow_pub.publish(Bool(data=False))
+        self._warmup_phrases = (['瓦力系统已就绪', '瓦力已锁定跟随者', '瓦力已解除跟随者']
+                                + list(self._CMD_TTS.values()))
+        self._warmup_done = False
+
         self.get_logger().info('Motion arbiter ready — VOICE_MANUAL mode')
 
     def destroy_node(self):
@@ -180,8 +199,20 @@ class MotionArbiter(Node):
         if self._welcome_played:
             return
         self._welcome_played = True
-        self._speak_tts('系统已就绪')
         self.get_logger().info('Welcome triggered — ALL SYSTEMS GO')
+
+        # 延迟 TTS 预热: 等系统稳定后后台逐条合成, 不抢启动 CPU
+        if not self._warmup_done:
+            self._warmup_done = True
+            import threading
+            def _delayed_warmup():
+                import time
+                time.sleep(10)  # 等 BPU 推理稳定
+                TTSEngine.get().warmup(self._warmup_phrases)
+                self.get_logger().info(
+                    f'TTS warmup done ({len(self._warmup_phrases)} phrases)')
+            t = threading.Thread(target=_delayed_warmup, daemon=True)
+            t.start()
 
     # ═════════════════════════════════════════════════════════════
     # 串口
@@ -192,6 +223,12 @@ class MotionArbiter(Node):
             TTSEngine.get().speak(text)
         except Exception as e:
             self.get_logger().warn(f'TTS speak failed: {e}')
+
+    def _speak_cmd_tts(self, cmd_id):
+        """播报命令对应的 TTS 反馈 (如有)."""
+        text = self._CMD_TTS.get(cmd_id)
+        if text:
+            self._speak_tts(text)
 
     def _write_cmd(self, cmd_id):
         if self._ser is None:
@@ -242,14 +279,14 @@ class MotionArbiter(Node):
             return
         if new_id is not None:
             # 锁定 / 切换目标
-            self._speak_tts('已锁定跟随者')
+            self._speak_tts('瓦力已锁定跟随者')
             tag = f'#{new_id}'
             if prev_id is not None:
                 tag = f'#{prev_id}→#{new_id}'
             self.get_logger().info(f'lock feedback → {tag}')
         else:
             # 解除锁定
-            self._speak_tts('已解除跟随者')
+            self._speak_tts('瓦力已解除跟随者')
             self.get_logger().info(f'release feedback ← #{prev_id}')
 
     def _on_emergency_stop(self, msg: Bool):
@@ -435,17 +472,22 @@ class MotionArbiter(Node):
         name, vel = self.CMD_MAP[cmd_id]
         now = self.get_clock().now().nanoseconds / 1e9
 
-        # 防 CI1302 扬声器→麦克风反馈误触发: 命令后 500ms 冷却
-        if now - self._last_voice_ts < 0.5:
+        # 防 CI1302 反馈误触发: 命令后 200ms 冷却 (播报词已与触发词区分)
+        if now - self._last_voice_ts < 0.2:
             return
         self._last_voice_ts = now
 
-        if cmd_id == 0x04:  # LOCK_TARGET (V6: 语音"锁定跟随者" → 锁定最近行人)
+        if cmd_id == 0x01:  # 唤醒词 — 仅 TTS 确认
+            self._speak_tts(self._CMD_TTS.get(0x01, '我在'))
+            self.get_logger().info('VOICE: WAKE → TTS feedback')
+            return
+
+        if cmd_id == 0x04:  # LOCK_TARGET
             self._voice_gesture_pub.publish(Int32(data=1))
             self.get_logger().info('VOICE: LOCK_TARGET → relay to perception')
             return
 
-        if cmd_id == 0x05:  # RELEASE_TARGET (V6: 语音"解除跟随者" → 解除锁定)
+        if cmd_id == 0x05:  # RELEASE_TARGET
             self._voice_gesture_pub.publish(Int32(data=0))
             self.get_logger().info('VOICE: RELEASE_TARGET → relay to perception')
             return
@@ -456,7 +498,7 @@ class MotionArbiter(Node):
                 self._follow_pub.publish(Bool(data=True))
                 self._last_cmd_id = None
                 self._last_cmd_vel = None
-                self._speak_tts('进入跟随模式')
+                self._speak_cmd_tts(0x0D)
                 if self._locked_id is not None:
                     self.get_logger().info(
                         f'lock feedback (FOLLOW entry) → #{self._locked_id}')
@@ -467,7 +509,7 @@ class MotionArbiter(Node):
             if self._locked_id is not None:
                 self.get_logger().info(
                     f'release feedback (FOLLOW exit) ← #{self._locked_id}')
-            self._speak_tts('退出跟随模式')
+            self._speak_cmd_tts(0x0E)
             self._exit_following('VOICE: FOLLOW_OFF')
             return
 
@@ -481,12 +523,14 @@ class MotionArbiter(Node):
                 self._publish_vel('STOP', self._STOP_VEL)
                 self._last_cmd_id = None
                 self._last_cmd_vel = None
+            self._speak_cmd_tts(cmd_id)
             return
 
         self._publish_vel(name, vel)
         self._last_cmd_ts = now
         self._last_cmd_id = cmd_id
         self._last_cmd_vel = vel
+        self._speak_cmd_tts(cmd_id)
         self.get_logger().info(
             f'VOICE: {name} (ID=0x{cmd_id:02X}) '
             f'[{self._state.name}]')

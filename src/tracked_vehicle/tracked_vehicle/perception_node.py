@@ -16,13 +16,14 @@
 
 融合管线: 自适应聚类 -> 躯干几何过滤 -> 匈牙利角度匹配 -> EKF(x,y,vx,vy)
 
-手势锁定 (v0.9.0 滑动窗口 + 多码并行):
-  /hobot_hand_gesture_detection 属性码 OK=11 + Victory=2 并行锁定, Palm=5 解锁
+手势锁定 (v0.10.0 滑动窗口 + 多码并行):
+  /hobot_hand_gesture_detection 属性码 OK=11 + 👍=2 并行锁定, Palm=5 解锁
+  (✌️ Victory=3 备用, 当前使用 👍=2 触发最稳定)
   30帧窗口, ≥15命中触发, 容忍短暂掉帧; 置信度门控 (默认 0.0 即禁用)
   空间匹配: 严格 hand-in-body-rect → fallback 最近人体 (250px)
   自适应发现: 新出现手势码自动打印 GESTURE DISCOVERY 日志
-  IDLE — 无锁定, OK/Victory 手势触发锁定
-  LOCKED — 已锁定, 另一人 OK/Victory 则切换, Palm 则解除
+  IDLE — 无锁定, OK/👍 手势触发锁定
+  LOCKED — 已锁定, 另一人 OK/👍 则切换, Palm 则解除
   HOLDING — 被锁者短暂消失: <1s 保持原锁不 RE-ID, 1-5s 尝试 RE-ID (80px), >5s 解锁
 """
 import rclpy
@@ -38,6 +39,7 @@ import math
 import subprocess
 
 from .lidar_fusion import FusionEngine, _find_body_roi
+from .tts_engine import TTSEngine
 
 
 class PerceptionNode(Node):
@@ -86,7 +88,7 @@ class PerceptionNode(Node):
         self._gesture_ts = 0.0
         self._gesture_window = []           # deque-like: list of (code, score)
         self._gesture_window_max = self.declare_parameter('gesture_window_max', 30).value
-        # 锁定码列表: OK=11 + Victory=2 (✌️) 并行触发
+        # 锁定码列表: OK=11 + 👍=2 并行触发 (✌️ Victory=3 备用)
         self._lock_codes = self.declare_parameter('lock_codes', [11, 2]).value
         self._unlock_codes = self.declare_parameter('unlock_codes', [5]).value
         # 诊断: 自动发现未识别的手势码 (仅首次打印)
@@ -349,9 +351,9 @@ class PerceptionNode(Node):
     def gesture_cb(self, msg: PerceptionTargets):
         """滑动窗口手势投票: 多码并行 + 置信度门控 + 自适应发现.
 
-        OK=11, Victory=2(✌️) 可并行触发锁定; Palm=5 触发解锁.
+        OK=11, 👍=2 可并行触发锁定; Palm=5 触发解锁 (✌️ Victory=3 备用).
         30 帧窗口内 ≥15 帧命中即触发, 容忍短暂掉帧.
-        首次出现的新手势码自动打印, 方便发现 Victory 等新码."""
+        首次出现的新手势码自动打印, 方便发现."""
         now = self.get_clock().now().nanoseconds / 1e9
 
         for t in msg.targets:
@@ -914,6 +916,13 @@ class PerceptionNode(Node):
         if not self._startup_done and now - self._start_ts > self._startup_timeout_s + 5.0:
             self._startup_done = True
             self._ready_pub.publish(Bool(data=True))
+            # 屏幕显示 ALL SYSTEMS GO 的同时 TTS 播报欢迎语
+            if not getattr(self, '_welcome_spoken', False):
+                self._welcome_spoken = True
+                try:
+                    TTSEngine.get().speak('瓦力系统已就绪')
+                except Exception:
+                    pass
             if n_fail > 0:
                 failed_names = ', '.join(sorted(self._startup_failed))
                 self.get_logger().warn(f'STARTUP DONE with {n_fail} timeout(s): {failed_names}')

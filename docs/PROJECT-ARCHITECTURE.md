@@ -158,7 +158,7 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 
 #### hand_gesture_detection — 手势分类
 - **模型**: `gestureDet_8x21.hbm`, 静态手势检测
-- **输出**: `/hobot_hand_gesture_detection`, 属性码 OK=11 / Palm=5
+- **输出**: `/hobot_hand_gesture_detection`, 属性码 OK=11 / 👍=2 / ✌️=3 / Palm=5
 - **设计原因**: 使用手势而非物理按钮做目标锁定, 用户无需接触车辆
 
 #### body_tracking — 跟随策略
@@ -192,7 +192,7 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
    - 躯干几何过滤 (弧宽 15-70cm + 曲率 <0.97)
    - 匈牙利角度匹配 (scipy linear_sum_assignment)
    - EKF 状态估计 [x, y, vx, vy], Q×dt 缩放
-2. **手势锁定**: OK=11/Palm=5 属性码投票 (15 帧, ~0.25s @ 60fps)
+2. **手势锁定**: OK=11/👍=2 并行锁定 + Palm=5 解锁, 滑动窗口投票 (15/30 帧)
 3. **障碍物急停**: 前方 ±15° 内 <0.5m → /emergency_stop
 4. **HDMI 渲染**: OpenCV 全屏 1024×600, 系统状态栏 (CPU/BPU/MEM/TEMP/FPS)
 
@@ -261,7 +261,7 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 
 | 里程碑 | 内容 |
 |--------|------|
-| 手势锁定 | OK=11/Palm=5, 30 帧投票 + 空间匹配 (手→人体关联) |
+| 手势锁定 | OK=11/👍=2 并行锁定 + Palm=5 解锁, 滑动窗口投票 + 空间匹配 |
 | 语音控制 | CI1302 V01843 固件 + voice_bridge 节点, 14 条命令 |
 | 状态机 | VOICE_MANUAL ↔ FOLLOWING, voice_bridge 仲裁 /cmd_vel |
 | 启动增强 | 进度条 + 逐项检测 + 超时报警, /system_ready 事件驱动 |
@@ -303,7 +303,7 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 | ★ 锁稳定性 | RE-ID 保持窗口 1s (修复秒切 bug), 搜索半径 150→80px, 急停豁免被锁人 |
 | ★ 横向 PD | 纯 P→PD (k_p=0.4, k_d=1.2), ±5cm 死区, 低通滤波 α=0.25, staleness 1→0.3s |
 | ★ 后退丝滑 | Schmitt 迟滞 + 速度地板(-0.15) + EKF vx 前馈 + 20Hz 独立定时器 |
-| 手势 Phase 3 | Victory(✌️) 并行锁定, 滑动窗口投票, 置信度门控, 空间 fallback, 自适应发现 |
+| 手势 Phase 3 | 👍(2) 并行锁定, 滑动窗口投票, 置信度门控, 空间 fallback, 自适应发现 (✌️=3 备用) |
 | 系统优化 | 启动 62s→20s (禁用 8 无用服务), 磁盘 13G→9.6G, PWM 日志炸弹修复 |
 | 参数调优 | angular_gain 600→450, PERSON_STALE_MAX 30→15 |
 

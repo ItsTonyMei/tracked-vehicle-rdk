@@ -21,7 +21,7 @@
  12. camera_tf (static: base_link -> camera_frame)
 
 融合管线: 自适应聚类 -> 躯干几何过滤 -> 匈牙利匹配 -> EKF(x,y,vx,vy)
-手势锁定: /hobot_hand_gesture_detection 属性码 OK=11/Palm=5 (vote=15)
+手势锁定: /hobot_hand_gesture_detection 属性码 OK=11 + 👍=2 锁定, Palm=5 解锁 (vote=15)
 控制层级: RC CH5 ARM -> RC CH6 X5模式 -> 语音手动 -> 跟随 -> 手势锁定
 用法: ros2 launch tracked_vehicle person_follow.launch.py
 """
@@ -109,7 +109,7 @@ def generate_launch_description():
         name='perception_node', output='screen',
         parameters=[{'rotate_deg': 0,
                      'cam_hfov_deg': 72.0,
-                     'lock_codes': [11, 2],  # OK + Victory (✌️) 并行锁定
+                     'lock_codes': [11, 2],  # OK(11) + 👍(2) 并行锁定, ✌️ Victory=3 备用
                      'unlock_codes': [5],  # Palm
                      'gesture_min_score': 0.0,
                      'gesture_match_max_px': 250.0,

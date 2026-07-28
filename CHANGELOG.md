@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **手势映射更正** — 👍=2 (稳定触发), ✌️ Victory=3 (备用), 注释和文档全面更新
 - **CI1302 静默化** — 移除 motion_arbiter 全部 6 处 CI1302 应答帧, 仅接收识别帧 (TYPE=0x81)
 - **语音架构重构** — CI1302 负责 ASR 输入, M30 负责 TTS 输出, 各司其职
 - **CI1302 优雅降级** — 串口打开失败时不再崩溃, 以无语音模式运行
