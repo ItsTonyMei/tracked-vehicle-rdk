@@ -160,7 +160,7 @@ tracked-vehicle-rdk/
 │   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
 │   └── person_follow.launch.py       #    ✅ 语音+手势人体跟随 (12 节点流水线)
 │
-├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.9.0)
+├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.10.0)
 │   ├── setup.py                      #    ✅ colcon 构建配置
 │   ├── setup.cfg                     #    ✅ 可执行文件路径
 │   ├── package.xml                   #    ✅ ROS2 依赖声明
@@ -174,8 +174,8 @@ tracked-vehicle-rdk/
 │
 ├── models/                           # 🧠 BPU 模型 (由 apt 管理) ✅
 ├── ci1302_firmware/                   # 🎙️ CI1302 语音模块固件 ✅
-│   ├── 命令词播报词协议列表V6_瓦力履带车.xlsx  #    V6 协议 (16条, 含锁定/解除跟随者)
-│   └── sfw20260722104324158193959/        #    V6 固件 (V01843 SDK, 2026-07-22)
+│   ├── 命令词播报词协议列表V7_瓦力履带车.xlsx  #    V7 协议 (被动播报, M30 TTS 输出)
+│   └── sfw20260727161528158195790/        #    V7 固件 (V01843 SDK, 2026-07-27)
 │       ├── CI1302_chinese_1mic_V01843_UART1_115200_2M.bin
 │       └── readme.txt
 │
@@ -199,7 +199,7 @@ tracked-vehicle-rdk/
 | ------------ | --------------- | -------------------------------- |
 | MotorCmd     | X5 → STM32     | 运动指令 (6B, 115200bps, CRC-8)  |
 | SBUS         | 遥控器 → STM32 | 手控接管 (25B, 100kbps, CH5/CH6) |
-| CI1302 A5 FA | X5 ↔ CI1302    | 语音识别/播报 (8B, 115200bps)    |
+| CI1302 A5 FA | X5 ← CI1302    | 语音识别输入 (V7被动, 8B, 115200) |
 | PWM          | STM32 → ESC    | 双路电调 (50Hz, 1000-2000μs)    |
 | VIS          | OpenMV → X5    | 后视辅助 (ASCII, 4800bps)        |
 
@@ -296,7 +296,7 @@ ros2 launch tracked_vehicle stereo_vision.launch.py
 | [docs/protocol-spec.md](./docs/protocol-spec.md)                                                     | ✅ 全部协议权威来源 (MotorCmd/SBUS/CI1302/PWM/VIS) |
 | [docs/stereo-vision-verification.md](./docs/stereo-vision-verification.md)                           | ✅ 双目视觉验证报告                                |
 | [docs/stereo-depth-exploration.md](./docs/stereo-depth-exploration.md)                               | ✅ 双目深度方案技术探索                            |
-| [docs/lessons-learned.md](./docs/lessons-learned.md)                                                 | ✅ 踩坑经验记录 (36条)                             |
+| [docs/lessons-learned.md](./docs/lessons-learned.md)                                                 | ✅ 踩坑经验记录 (42条)                             |
 | [docs/ROS-ExpansionboardV3.0-en-new-20250509.pdf](./docs/ROS-ExpansionboardV3.0-en-new-20250509.pdf) | ✅ STM32 扩展板手册                                |
 
 ---
@@ -315,7 +315,7 @@ ros2 launch tracked_vehicle stereo_vision.launch.py
   - [X] LiDAR-Camera 融合测距 (聚类+角度匹配+EKF, 纯 LiDAR 距离)
   - [X] 手势锁定 (OK + Victory ✌️ 并行) + 滑动窗口投票 + 空间 fallback
   - [X] HDMI 本地屏显 (1024×600, 系统监控 + CPU/BPU/MEM)
-  - [X] CI1302 V6 语音模块 (V01843/A5FA, 锁/解锁语音反馈)
+  - [X] CI1302 V7 语音模块 (被动播报, A5FA 仅识别帧 → M30 TTS 输出)
   - [X] systemd 开机自启 (启动 20s)
 - [ ] M6：后视摄像头接入 (OpenMV VIS 帧解析)
 - [X] M7：LiDAR 紧急制动 (perception_node /emergency_stop + 被锁人豁免, v0.9.0)

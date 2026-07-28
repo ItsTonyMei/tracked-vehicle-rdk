@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""voice_asr — 离线中文语音识别节点 (Vosk)
+"""[实验性] voice_asr — 离线中文语音识别节点 (Vosk, 当前不在 launch 中运行)
 
 状态机:
   SLEEP  ──唤醒词"你好瓦力"──→  AWAKE

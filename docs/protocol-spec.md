@@ -150,7 +150,7 @@ WFLY RF209S 实测: raw 352 (min) ~ 1024 (center) ~ 1695 (max)
 | 0 | `0xA5` | 帧头 1 |
 | 1 | `0xFA` | 帧头 2 |
 | 2 | `0x00` | 保留 |
-| 3 | `TYPE` | `0x81`=模块→X5 (识别), `0x82`=X5→模块 (播报) |
+| 3 | `TYPE` | `0x81`=模块→X5 (识别), `0x82`=保留 (V7 起 X5 不再发送) |
 | 4 | `CMD` | 命令 ID (见下表) |
 | 5 | `0x00` | 保留 |
 | 6 | `CKSUM` | `(A5+FA+00+TYPE+CMD+00) & 0xFF` |
@@ -197,8 +197,8 @@ WFLY RF209S 实测: raw 352 (min) ~ 1024 (center) ~ 1695 (max)
 ### 实现参考
 
 X5 端节点:
-- `motion_arbiter.py`: CI1302 串口收发 (`_TYPE_FROM_CI1302=0x81`, `_TYPE_TO_CI1302=0x82`)
-  - 手势锁/解锁 → 自动播报 0x04/0x05 (仅在 FOLLOWING 模式, 二次语音确认)
+- `motion_arbiter.py`: CI1302 串口仅接收 (`_TYPE_FROM_CI1302=0x81`), 不再发送 0x82 应答帧
+  - 手势锁/解锁 → M30 + piper-tts TTS 播报确认 (V7 起不再通过 CI1302 播放)
   - 语音"锁定跟随者"/"解除跟随者" → `/voice_gesture_cmd` (Int32: 1=lock, 0=unlock)
 - `perception_node.py`: 订阅 `/voice_gesture_cmd`, 执行等效手势锁/解锁 (锁定最近行人)
 

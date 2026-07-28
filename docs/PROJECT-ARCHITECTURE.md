@@ -246,7 +246,7 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 
 ---
 
-## 5. 研发历程 (v0.1 → v0.9)
+## 5. 研发历程 (v0.1 → v0.10)
 
 ### Phase 1: 基础能力 (v0.1 - v0.4)
 
@@ -306,6 +306,19 @@ Layer 5: 手势锁定目标       ← OK=锁定特定人物, Palm=解除锁定
 | 手势 Phase 3 | 👍(2) 并行锁定, 滑动窗口投票, 置信度门控, 空间 fallback, 自适应发现 (✌️=3 备用) |
 | 系统优化 | 启动 62s→20s (禁用 8 无用服务), 磁盘 13G→9.6G, PWM 日志炸弹修复 |
 | 参数调优 | angular_gain 600→450, PERSON_STALE_MAX 30→15 |
+
+### Phase 7: 语音系统重构 (v0.10.0)
+
+| 里程碑 | 内容 |
+|--------|------|
+| M30 TTS | Edifier M30 USB 扬声器 + piper-tts 离线中文 TTS, WAV 缓存 |
+| CI1302 V7 | 被动播报固件, 模块仅发识别帧, 不自播; M30 统一语音输出 |
+| TTS 事件 | 系统就绪/锁定/解锁/急停/跟随切换共 13 条语音反馈 |
+| WiFi 指示 | HDMI 右上角信号图标 + SSID, powersave 关闭防断连 |
+| CI1302 降级 | 串口缺失时 motion_arbiter 不崩溃, 无语音模式运行 |
+| 手势映射更正 | 👍=2 (稳定触发), ✌️=3 (备用), OK=11, Palm=5 |
+| Bug 修复 | 后退速度地板 min→max, 私有属性→公开方法, TTS 惰性初始化卡顿 |
+| 系统清理 | 禁用 rsyslog/blueman/hobot-automount, apt clean, journal vacuum |
 
 ---
 
