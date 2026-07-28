@@ -134,6 +134,11 @@ class PerceptionNode(Node):
         self._last_published_id = -2
 
         self._ready_pub = self.create_publisher(Bool, '/system_ready', 10)
+
+        # 提前后台初始化 TTS (避免首次 speak() 时卡住 render 线程)
+        import threading as _th
+        _th.Thread(target=lambda: TTSEngine.get(), daemon=True).start()
+
         self.timer = self.create_timer(1.0/15.0, self.render)
         self._start_ts = self.get_clock().now().nanoseconds / 1e9
 
@@ -380,31 +385,31 @@ class PerceptionNode(Node):
                 if len(self._gesture_window) > self._gesture_window_max:
                     self._gesture_window.pop(0)
 
-                # 检查锁定触发 (多码并行)
-                for lock_code in self._lock_codes:
-                    lock_hits = sum(1 for c, _ in self._gesture_window
-                                    if c == lock_code)
-                    if lock_hits >= self._VOTE_THRESHOLD:
-                        if now - self._gesture_ts >= self._ok_cooldown_s:
-                            self._gesture_window.clear()
-                            self._gesture_ts = now  # 先设冷却, 防止 _on_ok 失败时重复触发
-                            self.get_logger().info(
-                                f'GESTURE LOCK: code={lock_code} hits={lock_hits}')
-                            self._on_ok(now, msg)
-                            return
+        # ── 锁定/解锁检测 (窗口更新后只算一次, 不重复计算) ──
+        if self._gesture_window:
+            for lock_code in self._lock_codes:
+                lock_hits = sum(1 for c, _ in self._gesture_window
+                                if c == lock_code)
+                if lock_hits >= self._VOTE_THRESHOLD:
+                    if now - self._gesture_ts >= self._ok_cooldown_s:
+                        self._gesture_window.clear()
+                        self._gesture_ts = now
+                        self.get_logger().info(
+                            f'GESTURE LOCK: code={lock_code} hits={lock_hits}')
+                        self._on_ok(now, msg)
+                        return
 
-                # 检查解锁触发
-                for unlock_code in self._unlock_codes:
-                    unlock_hits = sum(1 for c, _ in self._gesture_window
-                                      if c == unlock_code)
-                    if unlock_hits >= self._VOTE_THRESHOLD:
-                        if now - self._gesture_ts >= self._ok_cooldown_s:
-                            self._gesture_window.clear()
-                            self._gesture_ts = now  # 先设冷却, 防止 _on_palm 失败时重复触发
-                            self.get_logger().info(
-                                f'GESTURE UNLOCK: code={unlock_code} hits={unlock_hits}')
-                            self._on_palm(now)
-                            return
+            for unlock_code in self._unlock_codes:
+                unlock_hits = sum(1 for c, _ in self._gesture_window
+                                  if c == unlock_code)
+                if unlock_hits >= self._VOTE_THRESHOLD:
+                    if now - self._gesture_ts >= self._ok_cooldown_s:
+                        self._gesture_window.clear()
+                        self._gesture_ts = now
+                        self.get_logger().info(
+                            f'GESTURE UNLOCK: code={unlock_code} hits={unlock_hits}')
+                        self._on_palm(now)
+                        return
 
     def follow_cb(self, msg: Bool):
         self._follow_active = msg.data
@@ -602,6 +607,18 @@ class PerceptionNode(Node):
     # 渲染
 
     @staticmethod
+    def _status_dot(frame, x, y, pct, warn_th=80, crit_th=95):
+        """绘制状态圆点: 绿/黄/红."""
+        r = 7  # _DOT_R
+        if pct >= crit_th:
+            c = (0, 0, 255)
+        elif pct >= warn_th:
+            c = (0, 255, 255)
+        else:
+            c = (0, 255, 0)
+        cv2.circle(frame, (x, y), r, c, -1)
+
+    @staticmethod
     def _rotate(img, deg):
         if deg == 90:
             return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
@@ -634,8 +651,8 @@ class PerceptionNode(Node):
         if self._locked_id is not None and self._locked_id in self._fused:
             fd = self._fused[self._locked_id]
             # EKF 速度前馈: vx<0 表示人在靠近, 供 motion_arbiter 预判后退
-            ekf = self._fusion._tracks.get(self._locked_id)
-            ekf_vx = float(ekf.state['vx']) if ekf else 0.0
+            ekf_state = self._fusion.get_ekf_state(self._locked_id)
+            ekf_vx = float(ekf_state['vx']) if ekf_state else 0.0
             self._locked_target_pub.publish(
                 Point(x=float(fd['dist']), y=float(fd.get('y', 0.0)), z=ekf_vx))
         else:
@@ -740,19 +757,10 @@ class PerceptionNode(Node):
         mem_pct = si.get('mem_pct', 0)
         temp = si.get('temp', 0)
 
-        def _draw_dot(x, y, pct, warn_th=80, crit_th=95):
-            if pct >= crit_th:
-                c = (0, 0, 255)
-            elif pct >= warn_th:
-                c = (0, 255, 255)
-            else:
-                c = (0, 255, 0)
-            cv2.circle(frame, (x, y), self._DOT_R, c, -1)
-
         row1_y = 22
         x = 10
         for label, pct in [('CPU', cpu_pct), ('BPU', bpu_pct), ('MEM', mem_pct)]:
-            _draw_dot(x + self._DOT_R, row1_y, pct)
+            self._status_dot(frame, x + self._DOT_R, row1_y, pct)
             cv2.putText(frame, f'{label}:{pct:.0f}%', (x + 20, row1_y + 8),
                         self._FONT, self._FONT_SCALE, (255, 255, 255), self._FONT_THICK)
             x += 160

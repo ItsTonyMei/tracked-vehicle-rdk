@@ -388,3 +388,8 @@ class FusionEngine:
 
         self._cached_result = result
         return result
+
+    def get_ekf_state(self, track_id):
+        """返回指定 track_id 的 EKF 状态 dict, 不存在则返回 None."""
+        ekf = self._tracks.get(track_id)
+        return ekf.state if ekf else None

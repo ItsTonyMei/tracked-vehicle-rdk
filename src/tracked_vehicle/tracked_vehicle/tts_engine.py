@@ -18,7 +18,6 @@ import os
 import logging
 import threading
 import subprocess
-import tempfile
 import hashlib
 
 import numpy as np

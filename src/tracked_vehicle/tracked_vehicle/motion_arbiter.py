@@ -48,11 +48,8 @@ import serial
 import time
 import math
 import enum
-import logging
 
 from .tts_engine import TTSEngine
-
-_log = logging.getLogger('motion_arbiter')
 
 
 class State(enum.IntEnum):
@@ -206,7 +203,6 @@ class MotionArbiter(Node):
             self._warmup_done = True
             import threading
             def _delayed_warmup():
-                import time
                 time.sleep(10)  # 等 BPU 推理稳定
                 TTSEngine.get().warmup(self._warmup_phrases)
                 self.get_logger().info(
@@ -320,7 +316,7 @@ class MotionArbiter(Node):
                 ratio = (dist_m - 0.5) / (self._back_enter_m - 0.5)
                 vel = self._vel_back * (1.0 - ratio)  # -0.3→~0
             # 地板: 不低于 _back_vel_floor (-0.15), 克服静摩擦
-            vel = min(vel, self._back_vel_floor)
+            vel = max(vel, self._back_vel_floor)
             # EKF 前馈: 人在靠近时增加后退量
             if math.isfinite(self._locked_vx) and self._locked_vx < -0.1:
                 vel += self._k_ff_approach * self._locked_vx  # vx<0 → vel 更负

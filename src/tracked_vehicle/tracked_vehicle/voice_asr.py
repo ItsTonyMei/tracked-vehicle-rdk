@@ -94,7 +94,7 @@ class VoiceAsr(Node):
 
         # ── 音频读取线程 ──
         self._audio_buffer = b''
-        self._running = True
+        self._stop_event = threading.Event()
         self._reader_thread = threading.Thread(
             target=self._read_audio, daemon=True)
         self._reader_thread.start()
@@ -107,7 +107,7 @@ class VoiceAsr(Node):
     def _read_audio(self):
         """后台线程: 从 arecord stdout 持续读取音频, 应用软件增益."""
         chunk_size = 3200  # 100ms @ 16kHz S16_LE mono = 3200 bytes
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 data = self._arecord.stdout.read(chunk_size)
                 if not data:
@@ -179,12 +179,13 @@ class VoiceAsr(Node):
         self._state = 'SLEEP'
 
     def destroy_node(self):
-        self._running = False
+        self._stop_event.set()
         try:
             self._arecord.terminate()
             self._arecord.wait(timeout=2)
         except Exception:
             self._arecord.kill()
+        self._reader_thread.join(timeout=1)
         super().destroy_node()
 
 
