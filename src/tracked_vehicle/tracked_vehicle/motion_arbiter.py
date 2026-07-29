@@ -119,6 +119,9 @@ class MotionArbiter(Node):
         self._back_exit_m = self.declare_parameter('back_exit_m', 1.0).value
         self._back_vel_floor = self.declare_parameter('back_vel_floor', -0.15).value
         self._k_ff_approach = self.declare_parameter('k_ff_approach', 1.2).value
+        self._linear_accel_limit = self.declare_parameter('linear_accel_limit', 0.8).value
+        self._linear_lpf = self.declare_parameter('linear_lpf_alpha', 0.30).value
+        self._ff_lpf = self.declare_parameter('ff_lpf_alpha', 0.20).value
 
         self._state = State.VOICE_MANUAL
         self._last_cmd_ts = 0.0
@@ -135,6 +138,10 @@ class MotionArbiter(Node):
 
         # ── P + LPF 横向控制状态 ──
         self._prev_angular_z = 0.0
+
+        # ── 线速度平滑状态 ──
+        self._prev_linear_x = 0.0
+        self._prev_ff_vel = 0.0    # EKF 前馈 LPF 状态
 
         # ── 后退迟滞状态 ──
         self._was_backing = False
@@ -300,8 +307,8 @@ class MotionArbiter(Node):
         返回 None 表示无可用距离, 调用方应回退到 bbox 判定.
 
         后退迟滞: 进入后退 < back_enter_m, 退出 > back_exit_m (Schmitt trigger).
-        EKF 前馈: 人在靠近 (vx<0) → 提前增加后退量, 补偿 LiDAR 延迟.
-        速度地板: 后退不低于 back_vel_floor, 克服履带车静摩擦."""
+        EKF 前馈: 人在靠近 (vx<0) → 增加后退量, LPF 平滑避免突变.
+        速度地板: min(vel, floor) 确保后退不低于 _back_vel_floor (~克服静摩擦)."""
         if dist_m is None or not math.isfinite(dist_m) or dist_m <= 0:
             return None
 
@@ -309,17 +316,22 @@ class MotionArbiter(Node):
         in_back_zone = dist_m < self._back_enter_m
         if in_back_zone or (self._was_backing and dist_m < self._back_exit_m):
             self._was_backing = True
-            # 0.5m → 全速后退, _back_enter_m → 速度地板 (graduated)
+            # 0.5m → 全速后退, _back_enter_m → 0 (graduated)
             if dist_m < 0.5:
-                vel = float(self._vel_back)
+                vel = float(self._vel_back)       # -0.3
             else:
-                ratio = (dist_m - 0.5) / (self._back_enter_m - 0.5)
-                vel = self._vel_back * (1.0 - ratio)  # -0.3→~0
-            # 地板: 不低于 _back_vel_floor (-0.15), 克服静摩擦
-            vel = max(vel, self._back_vel_floor)
-            # EKF 前馈: 人在靠近时增加后退量
+                ratio = min(1.0, (dist_m - 0.5) / (self._back_enter_m - 0.5))
+                vel = self._vel_back * (1.0 - ratio)  # -0.3→0
+            # 迟滞区 (退出门控): 距离 > back_enter_m 时不产生正向速度
+            vel = min(vel, 0.0)
+            # 地板: min 确保速度不低于 floor (克服静摩擦, -0.15)
+            vel = min(vel, self._back_vel_floor)
+            # EKF 前馈: 人在靠近时增加后退量 (LPF 平滑)
             if math.isfinite(self._locked_vx) and self._locked_vx < -0.1:
-                vel += self._k_ff_approach * self._locked_vx  # vx<0 → vel 更负
+                raw_ff = self._k_ff_approach * self._locked_vx  # vx<0 → ff<0
+                self._prev_ff_vel = (self._ff_lpf * raw_ff +
+                                     (1.0 - self._ff_lpf) * self._prev_ff_vel)
+                vel += self._prev_ff_vel
             return max(vel, self._vel_back * 1.5)  # 上限: 不超 1.5x max_back
         self._was_backing = False
 
@@ -355,10 +367,14 @@ class MotionArbiter(Node):
 
         # 安全门控: 无锁定时禁止跟随, 防止跟踪未经授权的路人
         if self._locked_id is None:
+            self._prev_linear_x = 0.0    # 复位平滑状态
+            self._prev_ff_vel = 0.0
             self._pub.publish(out)
             return
 
         if self._emergency_stop:
+            self._prev_linear_x = 0.0    # 急停立即复位
+            self._prev_ff_vel = 0.0
             self._pub.publish(out)  # 纯零速, 禁止旋转
             return
 
@@ -384,15 +400,32 @@ class MotionArbiter(Node):
         elif bt_fresh:
             out.angular = bt_msg.angular
 
-        # ── 线速度: LiDAR 距离映射 (含 EKF 前馈 + 后退迟滞) ──
+        # ── 线速度: LiDAR 距离映射 + LPF + 加速度限制 ──
         if lidar_fresh:
-            vel = self._distance_to_linear_vel(self._locked_dist)
-            if vel is not None:
-                out.linear.x = float(vel)
+            raw_vel = self._distance_to_linear_vel(self._locked_dist)
+            if raw_vel is not None:
+                # LPF 平滑 (与角速度一致)
+                smooth_vel = (self._linear_lpf * raw_vel +
+                              (1.0 - self._linear_lpf) * self._prev_linear_x)
+                # 加速度限制: max change/tick = accel_limit * dt (20Hz → dt=0.05s)
+                max_dv = self._linear_accel_limit * 0.05
+                dv = smooth_vel - self._prev_linear_x
+                if abs(dv) > max_dv:
+                    dv = math.copysign(max_dv, dv)
+                    smooth_vel = self._prev_linear_x + dv
+                out.linear.x = float(smooth_vel)
+                self._prev_linear_x = out.linear.x
             elif bt_fresh:
                 out.linear = bt_msg.linear
+                self._prev_linear_x = out.linear.x
         elif bt_fresh:
             out.linear = bt_msg.linear
+            self._prev_linear_x = out.linear.x
+        else:
+            # 无数据 → 向零衰减 (平滑停车)
+            decay = self._prev_linear_x * 0.5
+            out.linear.x = float(decay)
+            self._prev_linear_x = out.linear.x
 
         self._pub.publish(out)
 

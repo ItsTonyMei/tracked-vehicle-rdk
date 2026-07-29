@@ -38,6 +38,7 @@ import cv2
 import numpy as np
 import math
 import subprocess
+from collections import Counter
 
 from .lidar_fusion import FusionEngine, _find_body_roi
 from .tts_engine import TTSEngine
@@ -59,6 +60,7 @@ class PerceptionNode(Node):
         self._empty_reset_s = self.declare_parameter('empty_reset_s', 10.0).value
         self._gesture_min_score = self.declare_parameter('gesture_min_score', 0.0).value
         self._gesture_match_max_px = self.declare_parameter('gesture_match_max_px', 250.0).value
+        self._gesture_window_timeout_s = self.declare_parameter('gesture_window_timeout_s', 1.0).value
         self._max_det_age_s = self.declare_parameter('max_det_age_s', 0.5).value
         self._cam_hfov_deg = self.declare_parameter('cam_hfov_deg', 72.0).value  # SC132GS rotation=90 → 72°
 
@@ -226,7 +228,8 @@ class PerceptionNode(Node):
                 body_map[bt.track_id] = r
         if not body_map:
             return None
-        # Pass 1: 严格手在人体 bbox 内
+        # Pass 1: 严格手在人体 bbox 内 — 找距离最近的人体 (非第一个匹配)
+        best_tid, best_dist = None, float('inf')
         for gt in gesture_msg.targets:
             for groi in gt.rois:
                 if groi.type != 'hand':
@@ -235,7 +238,14 @@ class PerceptionNode(Node):
                 gy = groi.rect.y_offset + groi.rect.height / 2.0
                 for tid, brect in body_map.items():
                     if self._point_in_rect(gx, gy, brect):
-                        return tid
+                        bx = brect.x_offset + brect.width / 2.0
+                        by = brect.y_offset + brect.height / 2.0
+                        d = ((gx - bx) ** 2 + (gy - by) ** 2) ** 0.5
+                        if d < best_dist:
+                            best_dist = d
+                            best_tid = tid
+        if best_tid is not None:
+            return best_tid
         # Pass 2 (fallback): 伸臂场景 — 找最近人体 (< _gesture_match_max_px px)
         best_id, best_dist = None, float('inf')
         for gt in gesture_msg.targets:
@@ -355,12 +365,17 @@ class PerceptionNode(Node):
                     self._lost_since = 0.0
 
     def gesture_cb(self, msg: PerceptionTargets):
-        """滑动窗口手势投票: 多码并行 + 置信度门控 + 自适应发现.
+        """滑动窗口手势投票: 时间窗口 + 多码并行 + 人物累积投票.
 
         OK=11, 👍=2 可并行触发锁定; Palm=5 触发解锁 (✌️ Victory=3 备用).
-        30 帧窗口内 ≥15 帧命中即触发, 容忍短暂掉帧.
+        code=0 不计入窗口 (仅统计真实手势检测), 时间窗口 {timeout_s}s 内过期.
+        每帧匹配手势→人体, 触发时用多数票决定锁定谁 (解决多人场景错锁).
         首次出现的新手势码自动打印, 方便发现."""
         now = self.get_clock().now().nanoseconds / 1e9
+        timeout_s = self._gesture_window_timeout_s
+
+        # 本帧手势→人体匹配 (每帧一次, 不重复算)
+        matched_person = self._match_gesture_to_person(msg) if msg.targets else None
 
         for t in msg.targets:
             for attr in t.attributes:
@@ -377,32 +392,44 @@ class PerceptionNode(Node):
                         f'GESTURE DISCOVERY: code={code} score={score:.3f} '
                         f'(lock_codes={self._lock_codes}, unlock_codes={self._unlock_codes})')
 
-                # 置信度门控: 低置信度不计入窗口
-                if code != 0 and score < self._gesture_min_score:
+                # code=0 (无手势) 和低置信度不计入窗口
+                if code == 0 or score < self._gesture_min_score:
                     continue
 
-                # 滑动窗口
-                self._gesture_window.append((code, score))
-                if len(self._gesture_window) > self._gesture_window_max:
-                    self._gesture_window.pop(0)
+                # 窗口条目: (code, score, timestamp, matched_person_id)
+                self._gesture_window.append((code, score, now, matched_person))
 
-        # ── 锁定/解锁检测 (窗口更新后只算一次, 不重复计算) ──
+        # ── 时间过期: 移除超过 timeout_s 的条目 ──
+        self._gesture_window = [
+            e for e in self._gesture_window
+            if now - e[2] < timeout_s
+        ]
+
+        # 容量保护: 防止高频检测撑爆内存 (保留最近条目)
+        if len(self._gesture_window) > self._gesture_window_max * 3:
+            self._gesture_window = self._gesture_window[-self._gesture_window_max:]
+
+        # ── 锁定/解锁检测 ──
         if self._gesture_window:
             for lock_code in self._lock_codes:
-                lock_hits = sum(1 for c, _ in self._gesture_window
-                                if c == lock_code)
+                lock_entries = [e for e in self._gesture_window if e[0] == lock_code]
+                lock_hits = len(lock_entries)
                 if lock_hits >= self._VOTE_THRESHOLD:
                     if now - self._gesture_ts >= self._ok_cooldown_s:
+                        # 多数票: 投票期间手势匹配到的人中, 取出现次数最多的
+                        person_votes = [e[3] for e in lock_entries if e[3] is not None]
+                        winner = Counter(person_votes).most_common(1)[0][0] if person_votes else None
                         self._gesture_window.clear()
                         self._gesture_ts = now
                         self.get_logger().info(
-                            f'GESTURE LOCK: code={lock_code} hits={lock_hits}')
-                        self._on_ok(now, msg)
+                            f'GESTURE LOCK: code={lock_code} hits={lock_hits} '
+                            f'person_votes={dict(Counter(person_votes))} winner={winner}')
+                        self._on_ok(now, winner)
                         return
 
             for unlock_code in self._unlock_codes:
-                unlock_hits = sum(1 for c, _ in self._gesture_window
-                                  if c == unlock_code)
+                unlock_entries = [e for e in self._gesture_window if e[0] == unlock_code]
+                unlock_hits = len(unlock_entries)
                 if unlock_hits >= self._VOTE_THRESHOLD:
                     if now - self._gesture_ts >= self._ok_cooldown_s:
                         self._gesture_window.clear()
@@ -421,18 +448,22 @@ class PerceptionNode(Node):
     # ═══════════════════════════════════════════════════════════════
     # 锁定状态机
 
-    def _on_ok(self, now, gesture_msg):
-        """OK 手势 → 空间匹配 → 锁定."""
+    def _on_ok(self, now, matched_id):
+        """OK 手势 → 锁定 (matched_id 由手势投票窗口多数票决定)."""
         if self._targets is None:
             return
         if now - self._last_det_ts > self._max_det_age_s:
             self.get_logger().warn('检测数据过期，忽略锁定')
             return
-        matched_id = self._match_gesture_to_person(gesture_msg)
         if matched_id is None:
-            self.get_logger().warn('OK 手势未能匹配到任何人')
+            self.get_logger().warn('OK 手势未能匹配到任何人 (多数票无人)')
             return
         if matched_id == self._locked_id:
+            return
+        # 验证: 匹配到的人当前确实在画面中
+        if not self._target_visible(self._targets, matched_id):
+            self.get_logger().warn(
+                f'OK 手势匹配到 #{matched_id} 但当前不在画面中，忽略')
             return
         old_id = self._locked_id
         self._locked_id = matched_id
@@ -881,11 +912,11 @@ class PerceptionNode(Node):
         # ── 手势投票状态: 显示当前活跃码及命中数 ──
         gx = 370
         if self._gesture_window:
-            codes = set(c for c, s in self._gesture_window if c != 0)
+            codes = set(e[0] for e in self._gesture_window)
             best = None
             best_hits = 0
             for code in codes:
-                hits = sum(1 for c, _ in self._gesture_window if c == code)
+                hits = sum(1 for e in self._gesture_window if e[0] == code)
                 if hits > best_hits:
                     best_hits = hits
                     best = code

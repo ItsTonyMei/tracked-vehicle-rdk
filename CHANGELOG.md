@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.1] - 2026-07-29
+
+### Fixed
+
+- **手势投票慢** — code=0 污染滑动窗口致有效投票被稀释, 改为仅统计非零码 + 1.0s 时间窗口过期
+- **多人场景锁错人** — Pass 1 返回第一个匹配而非最佳; 触发时单帧匹配无时序一致性。改为最佳距离匹配 + 投票期间人物多数票表决
+- **后退永远不到全速** — `max(vel, floor)` 将 -0.3 硬截为 -0.15, 改为 `min(vel, floor)` 确保下限而非上限
+- **后退迟滞区前冲** — dist > 0.85m 时 ratio>1 产生正向速度, 增加 `vel = min(vel, 0.0)` 防止后退→前进突变
+- **EKF 前馈突变** — vx 直接乘 k_ff=1.2 灌入速度瞬时跳变, 增加 LPF (α=0.20) 平滑
+- **线速度无平滑** — 增加 LPF (α=0.30) + 加速度限制 (0.8 m/s²) + 无数据时向零衰减
+
+### Changed
+
+- **手势投票窗口** — 从帧计数滑动窗口改为时间窗口 (gesture_window_timeout_s=1.0s), 条目存 4 元组 (code, score, ts, person_id)
+- **_match_gesture_to_person Pass 1** — 从返回第一个匹配改为遍历所有匹配取最近身体中心
+- **_on_ok** — 从接收 gesture_msg 单帧匹配改为接收多数票选出的 person_id, 增加画面内验证
+- **后退参数** — 新增 `linear_accel_limit` (0.8), `linear_lpf_alpha` (0.30), `ff_lpf_alpha` (0.20)
+
 ## [0.10.0] - 2026-07-27
 
 ### Added
