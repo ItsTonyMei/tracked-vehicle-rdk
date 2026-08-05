@@ -23,7 +23,7 @@ setup(
     zip_safe=False,  # data_files 必须解压后才能被 colcon 正确引用
     maintainer='sunrise',
     maintainer_email='sunrise@rdkx5.local',
-    description='6WD heavy tracked vehicle — RDK X5 autonomous follower',
+    description='Heavy tracked vehicle — RDK X5 autonomous follower',
     license='MIT',
     entry_points={
         'console_scripts': [

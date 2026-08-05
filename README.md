@@ -1,17 +1,17 @@
-# 6WD Heavy Tracked Vehicle — RDK X5 Autonomous Follower
+# Heavy Tracked Vehicle — RDK X5 Autonomous Follower
 
 [![ROS2](https://img.shields.io/badge/ROS2-Humble-blue)](https://docs.ros.org/en/humble/)
 [![RDK](https://img.shields.io/badge/RDK-X5-brightgreen)](https://developer.d-robotics.cc/rdk_doc/RDK)
 [![Python](https://img.shields.io/badge/Python-3.10+-yellow)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey)](./LICENSE)
 
-> 以地平线 RDK X5 为大脑、亚博 STM32 V3.0 扩展板为小脑、BPU 人体检测 + LiDAR-Camera EKF 融合测距为感知链的**六轮重载履带自主跟随机器人**。
+> 以地平线 RDK X5 为大脑、亚博 STM32 V3.0 扩展板为小脑、BPU 人体检测 + LiDAR-Camera EKF 融合测距为感知链的**重载履带自主跟随机器人**。
 
 ---
 
 ## 📖 概述
 
-本项目将一套原基于 **ESP32 + OpenMV** 的 6WD 履带跟随车迁移至 **RDK X5 + STM32 ROS 主控板** 架构，实现：
+本项目将一套原基于 **ESP32 + OpenMV** 的履带跟随车迁移至 **RDK X5 + STM32 ROS 主控板** 架构，实现：
 
 - **BPU 人体检测 + LiDAR-Camera EKF 融合测距** — mono2d_body_detection (BPU, ~60FPS) + T-mini Plus 2D LiDAR (10Hz) → 角度匹配 → 常速度 EKF → 公制距离
 - **语音仲裁跟随** — motion_arbiter 状态机 (VOICE_MANUAL / FOLLOWING) 作为 /cmd_vel 唯一发布者, LiDAR 距离覆写线速度
