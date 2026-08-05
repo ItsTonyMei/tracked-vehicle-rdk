@@ -190,28 +190,28 @@ tracked-vehicle-rdk/
 
 详见 **[docs/protocol-spec.md](docs/protocol-spec.md)** — 所有协议的单一权威来源.
 
-| 协议         | 方向            | 用途                             |
-| ------------ | --------------- | -------------------------------- |
-| MotorCmd     | X5 → STM32     | 运动指令 (6B, 115200bps, CRC-8)  |
-| SBUS         | 遥控器 → STM32 | 手控接管 (25B, 100kbps, CH5/CH6) |
+| 协议         | 方向            | 用途                              |
+| ------------ | --------------- | --------------------------------- |
+| MotorCmd     | X5 → STM32     | 运动指令 (6B, 115200bps, CRC-8)   |
+| SBUS         | 遥控器 → STM32 | 手控接管 (25B, 100kbps, CH5/CH6)  |
 | CI1302 A5 FA | X5 ← CI1302    | 语音识别输入 (V7被动, 8B, 115200) |
-| PWM          | STM32 → ESC    | 双路电调 (50Hz, 1000-2000μs)    |
-| VIS          | OpenMV → X5    | 后视辅助 (ASCII, 4800bps)        |
+| PWM          | STM32 → ESC    | 双路电调 (50Hz, 1000-2000μs)     |
+| VIS          | OpenMV → X5    | 后视辅助 (ASCII, 4800bps)         |
 
 ---
 
 ## 🛡️ 安全机制
 
-| 层级 | 机制                        | 描述                                                                 |
-| ---- | --------------------------- | -------------------------------------------------------------------- |
-| L1   | **SBUS 遥控器优先**   | 遥控器直连 STM32，指令硬件级优先于 X5                                |
-| L1.5 | **IWDG 硬件看门狗**   | STM32 独立看门狗 4s 超时，主循环异常时自动复位 MCU → ESC 掉信号刹停 |
-| L2   | **命令超时刹停**      | X5 超过 2s 无新 MotorCmd → STM32 自动切中位 + 蜂鸣锁定              |
-| L3   | **X5 安全看门狗**     | motor_bridge: 60s 无 /cmd_vel → 发停止帧 (X5端, 独立于STM32端2s超时)                          |
-| L4   | **电调物理保护**      | ZTW Seal G2 内置过流/过热/堵转保护                                   |
-| L5   | **视觉丢帧暂留**      | body_tracking: 丢失 ≤150 帧维持上一指令, 避免急刹                   |
-| L6   | **串口自动恢复**      | motor_bridge / motion_arbiter: 写失败自动重连                        |
-| L7   | **LiDAR 紧急制动** ✅  | perception_node: 前方 0.5m/±15° 障碍物 → /emergency_stop           |
+| 层级 | 机制                        | 描述                                                                  |
+| ---- | --------------------------- | --------------------------------------------------------------------- |
+| L1   | **SBUS 遥控器优先**   | 遥控器直连 STM32，指令硬件级优先于 X5                                 |
+| L1.5 | **IWDG 硬件看门狗**   | STM32 独立看门狗 4s 超时，主循环异常时自动复位 MCU → ESC 掉信号刹停  |
+| L2   | **命令超时刹停**      | X5 超过 2s 无新 MotorCmd → STM32 自动切中位 + 蜂鸣锁定               |
+| L3   | **X5 安全看门狗**     | motor_bridge: 60s 无 /cmd_vel → 发停止帧 (X5端, 独立于STM32端2s超时) |
+| L4   | **电调物理保护**      | ZTW Seal G2 内置过流/过热/堵转保护                                    |
+| L5   | **视觉丢帧暂留**      | body_tracking: 丢失 ≤150 帧维持上一指令, 避免急刹                    |
+| L6   | **串口自动恢复**      | motor_bridge / motion_arbiter: 写失败自动重连                         |
+| L7   | **LiDAR 紧急制动** ✅ | perception_node: 前方 0.5m/±15° 障碍物 → /emergency_stop           |
 
 ---
 
@@ -314,7 +314,7 @@ ros2 launch tracked_vehicle stereo_vision.launch.py
   - [X] systemd 开机自启 (启动 20s)
 - [ ] M6：后视摄像头接入 (OpenMV VIS 帧解析)
 - [X] M7：LiDAR 紧急制动 (perception_node /emergency_stop + 被锁人豁免, v0.9.0)
-- [ ] M8：场地实车测试
+- [X] M8：场地实车测试
 
 ---
 
