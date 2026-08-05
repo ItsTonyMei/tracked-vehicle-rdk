@@ -23,37 +23,46 @@
 
 ## 🏗️ 硬件架构
 
-```
-                         ┌─────────────────────┐
-                         │   专业遥控器 (SBUS)    │
-                         │     最高优先级        │
-                         └──────────┬──────────┘
-                                    │ SBUS (UART)
-                                    ▼
-┌──────────────┐  MIPI CSI   ┌─────────────┐  UART0  ┌──────────────────┐
-│  GS130W 单目  │◄──────────►│   RDK X5    │◄───────►│ STM32 ROS 主控板  │
-│  (960×544)   │            │  (L2 决策层) │MotorCmd │   (V3.0 · L1)    │
-└──────────────┘            │             │         │ 坦克混控·IMU·SBUS│
-                            │  BPU 人体检测 │         └────────┬─────────┘
-┌──────────────┐  UART1     │  LiDAR 融合   │                  │ PWM×2
-│ T-mini Plus  │◄──────────►│  语音仲裁     │         ┌────────▼─────────┐
-│ 激光雷达 12m  │            │  安全看门狗   │         │ ZTW Seal G2 ×2   │
-└──────────────┘            │  手势锁定     │         │ 双路无刷电调       │
-                            │              │         └────────┬─────────┘
-┌──────────────┐  UART2     │              │                  │ 三相无刷
-│ CI1302 语音  │◄──识别帧───│              │         ┌────────▼─────────┐
-│ (V7 被动播报) │            │              │         │ 电机L · 电机R     │
-└──────────────┘            │              │         └──────────────────┘
-                            │              │
-┌──────────────┐  USB Audio │              │
-│ M30 桌面扬声器│◄──TTS播报──│              │
-│ (piper-tts)  │            └──────┬──────┘
-└──────────────┘                   │ VIS帧(UART3)
-                                   │ VIS帧(UART3)   └──────────────────┘
-┌──────────────┐                   │
-│ OpenMV N6 ⬜  │◄──────────────────┘
-│ 后视辅助 M6   │  @4800bps
-└──────────────┘
+```mermaid
+flowchart TB
+    subgraph 感知输入
+        Cam["GS130W 广角相机<br/>960×544 @ 60fps"]
+        Lidar["YDLidar T-mini Plus<br/>360° · 10Hz · 12m"]
+        Mic["CI1302 语音模块<br/>离线识别（听）"]
+    end
+    subgraph 主控
+        X5["RDK X5 · Sunrise 5<br/>BPU 10 TOPS · ROS2 Humble"]
+    end
+    subgraph 底盘执行
+        STM["STM32F103RCT6 V3.0 扩展板<br/>SBUS 解析 · 坦克混控 · IWDG"]
+        ESC1["ZTW Seal G2 电调 L"]
+        ESC2["ZTW Seal G2 电调 R"]
+        M1["左履带电机"]
+        M2["右履带电机"]
+    end
+    subgraph 人机交互
+        Spk["Edifier M30 音箱<br/>piper-tts（说）"]
+        Scr["HDMI 屏 1024×600"]
+    end
+    RC["WFLY RF209S 遥控器"]:::safe
+    OMV["OpenMV N6 后视相机 ⬜<br/>M6 待接入"]:::future
+
+    Cam -- "MIPI CSI" --> X5
+    Lidar -- "UART 230400" --> X5
+    Mic -- "UART 115200" --> X5
+    X5 -- "MotorCmd 6B + CRC8" --> STM
+    STM -- "PWM 50Hz" --> ESC1
+    STM -- "PWM 50Hz" --> ESC2
+    ESC1 --> M1
+    ESC2 --> M2
+    RC -- "SBUS 100kbps 直连<br/>不经过 X5 · 最高优先级" --> STM
+    STM -. "调试日志转发" .-> X5
+    Spk -- "USB Audio" --> X5
+    Scr -- "HDMI" --> X5
+    OMV -. "VIS 帧 @4800bps（规划中）" .-> X5
+
+    classDef safe fill:#ffe0e0,stroke:#c0392b,stroke-width:2px
+    classDef future fill:#f5f5f5,stroke:#bbbbbb,stroke-dasharray:5 3
 ```
 
 ### 安全优先级
@@ -85,53 +94,39 @@ RDK X5 自主指令 (UART)    ▸  遥控器断开时生效
 
 ## 🧠 软件架构
 
-```
-
-                          ROS2 Humble + TROS
-┌────────────────────────────────────────────────────────────┐
-│                     📷 感知层 (Perception)                    │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│   │ MIPI 相机 │  │ 激光雷达  │  │ AI 语音  │  │ 后视相机  │  │
-│   │hobot_mipi│  │ t-mini   │  │ CI1302   │  │ OpenMV ⬜ │  │
-│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  │
-│        │ /image      │ /scan      │ UART      │ VIS 帧   │
-├────────┼─────────────┼────────────┼───────────┼──────────┤
-│        ▼               ▼            ▼            ▼         │
-│                     🧠 决策层 (Decision)                     │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐                 │
-│   │人体检测  │  │雷达融合  │  │语音仲裁  │                 │
-│   │mono2d    │  │lidar     │  │motion    │                 │
-│   │_body_det │  │_fusion   │  │_arbiter  │                 │
-│   └────┬─────┘  └────┬─────┘  └────┬─────┘                 │
-│        │ bbox       │ LiDAR-EKF   │ /cmd_vel 唯一发布者     │
-│        └───────┬───┘             │                        │
-│                ▼                 │                        │
-│         ┌──────────────┐         │                        │
-│         │ body_tracking│◄────────┘                        │
-│         │ /cmd_vel 仲裁 │◄─────────────────────────────────┘
-│         └──────┬───────┘                                   │
-│                │ /cmd_vel                                  │
-├────────────────┼───────────────────────────────────────────┤
-│                ▼                                           │
-│                     🎮 控制层 (Control)                     │
-│   ┌──────────┐  ┌──────────────────────────────────┐      │
-│   │cmd_vel   │  │    STM32 硬件安全层 (L1)          │      │
-│   │_bridge   │  │  SBUS 直连 · 2s 超时 · IWDG 4s  │      │
-│   └────┬─────┘  └──────────────────────────────────┘      │
-│        │ MotorCmd                                          │
-├────────┼──────────────┼──────────────────┼────────────────┤
-│        ▼              ▼                  ▼                 │
-│                     🔩 执行层 (Hardware)                    │
-│              ┌─────────────────────────┐                   │
-│              │   STM32 V3.0 扩展板      │                   │
-│              │  SBUS 直连 · 坦克混控    │                   │
-│              │  PWM → ZTW Seal G2 ×2   │                   │
-│              └───────────┬─────────────┘                   │
-│                          │ 三相无刷                         │
-│                    ┌─────┴─────┐                           │
-│                    │ 履带L·履带R │                           │
-│                    └───────────┘                           │
-└────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph 传感器层
+        CAM["mipi_cam / hobot_codec"]
+        LIDAR["ydlidar driver"]
+        CI["CI1302 语音模块"]
+    end
+    subgraph 感知层
+        direction TB
+        DET["mono2d_body_detection<br/>BPU 60fps 多任务检测"]
+        GES["hand_lmk → hand_gesture"]
+        BT["body_tracking<br/>视觉跟随策略"]
+        PER["perception_node<br/>融合 · 锁定 · 急停 · 屏显"]
+    end
+    subgraph 仲裁层
+        ARB["motion_arbiter<br/>/cmd_vel 唯一发布者"]
+    end
+    subgraph 执行层
+        BRG["motor_bridge<br/>串口桥接"]
+        HW["STM32 → 电调 → 履带"]
+    end
+    CAM --> DET
+    DET --> GES
+    DET --> BT
+    BT -->|"/cmd_vel_body_track"| ARB
+    GES -->|"手势码"| PER
+    DET -->|"人体框 + ID"| PER
+    CAM -->|"/image"| PER
+    LIDAR -->|"/scan 10Hz"| PER
+    CI -.->|"识别帧（直通仲裁层）"| ARB
+    PER -->|"/locked_target /emergency_stop"| ARB
+    ARB -->|"/cmd_vel"| BRG
+    BRG -->|"MotorCmd 6B + CRC8"| HW
 ```
 
 ---
