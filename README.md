@@ -3,7 +3,7 @@
 [![ROS2](https://img.shields.io/badge/ROS2-Humble-blue)](https://docs.ros.org/en/humble/)
 [![RDK](https://img.shields.io/badge/RDK-X5-brightgreen)](https://developer.d-robotics.cc/rdk_doc/RDK)
 [![Python](https://img.shields.io/badge/Python-3.10+-yellow)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-lightgrey)](./LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](./LICENSE)
 
 > 以地平线 RDK X5 为大脑、亚博 STM32 V3.0 扩展板为小脑、BPU 人体检测 + LiDAR-Camera EKF 融合测距为感知链的**重载履带自主跟随机器人**。
 
@@ -329,7 +329,21 @@ ros2 launch tracked_vehicle stereo_vision.launch.py
 
 ## 📄 许可证
 
-本项目基于 **MIT License** 开源。详见 [LICENSE](./LICENSE)。
+本项目基于 **Apache License 2.0** 开源（含专利授权条款）。详见 [LICENSE](./LICENSE)。
+
+### 第三方依赖许可
+
+本项目运行时依赖以下外部组件（**不随本仓库分发**，按各官方指引自行安装）：
+
+| 依赖 | 用途 | 许可 |
+|---|---|---|
+| [TROS (D-Robotics)](https://developer.d-robotics.cc/) | RDK X5 ROS2 发行版、感知模型 (BPU) | 地平线官方条款 |
+| [ydlidar_ros2_driver](https://github.com/YDLidar/ydlidar_ros2_driver) (humble 分支) | YDLidar T-mini Plus 驱动 | 以官方仓库为准 |
+| [YDLidar-SDK](https://github.com/YDLidar/YDLidar-SDK) | YDLidar 底层 SDK | 以官方仓库为准 |
+| ROS2 Humble 生态 (rclcpp/rclpy 等) | ROS2 运行时 | Apache 2.0 / BSD |
+| piper-tts | 离线中文 TTS 合成 | MIT |
+
+> 说明：`ci1302_firmware/` 下的芯片 SDK、烧录工具与协议文档为厂商资料，**不随本仓库分发**（相关文件已从版本管理排除）。
 
 ---
 

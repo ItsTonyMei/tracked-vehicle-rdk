@@ -55,3 +55,7 @@ nul
 
 # 第三方源码 (ydlidar humble 分支, 仅 Windows 侧管理, 不提交)
 third_party/
+
+# CI1302 vendor files (not public)
+ci1302_firmware/**/*.xlsx
+ci1302_firmware/**/readme.txt
