@@ -59,6 +59,24 @@ class PerceptionNode(Node):
         self._reid_max_dist_px = self.declare_parameter('reid_max_dist_px', 80.0).value
         self._empty_reset_s = self.declare_parameter('empty_reset_s', 10.0).value
         self._gesture_min_score = self.declare_parameter('gesture_min_score', 0.0).value
+        # 解锁手势 (Palm) 附加约束: 上半身位置 + 绑定被锁人
+        # (人手自然下垂/走路摆臂时模型易误报 Palm → 偶发误解锁; 见 GESTURE UNLOCK 误触发修复)
+        # NOTE: TROS gestureDet 的 attribute confidence 实测恒为 0 —
+        #       score 门槛不可用, 默认 0.0 (曾设 0.3 导致 Palm 永不解锁)
+        self._unlock_min_score = self.declare_parameter('unlock_min_score', 0.0).value
+        self._upper_body_only = self.declare_parameter('upper_body_only', True).value
+        # 手势须位于 bbox 顶部 ratio 高度内 (0.5=上半身; 摆臂最高点可达腰腹 → 收紧到 50%)
+        self._upper_body_ratio = self.declare_parameter('upper_body_ratio', 0.5).value
+        self._unlock_require_locked = self.declare_parameter('unlock_require_locked', True).value
+        # Palm 解锁独立票阈值 (默认 20 帧 ≈ 0.33s 连续匹配; 摆臂高位持续 ~0.2s 不足以解锁)
+        self._unlock_vote_threshold = self.declare_parameter(
+            'unlock_vote_threshold', 20).value
+        # 自动重锁: 目标丢失解锁后, 画面仍为单人时自动恢复锁定 (防遮挡后卡死; 多人不自动)
+        self._auto_relock_enabled = self.declare_parameter('auto_relock_enabled', True).value
+        # 视觉丢失外推: 人在相机 FOV 外/被遮挡时用 EKF 状态外推 /locked_target,
+        # 车继续转向追人直到重新入画 (右转时人出画 → 锁定丢 → 停的根治)
+        self._last_ekf = None          # (x, y, vx, vy, ts)
+        self._ekf_hold_s = self.declare_parameter('ekf_hold_s', 5.0).value
         self._gesture_match_max_px = self.declare_parameter('gesture_match_max_px', 250.0).value
         self._gesture_window_timeout_s = self.declare_parameter('gesture_window_timeout_s', 1.0).value
         self._max_det_age_s = self.declare_parameter('max_det_age_s', 0.5).value
@@ -214,11 +232,17 @@ class PerceptionNode(Node):
         return ids
 
     # ═══════════════════════════════════════════════════════════════
-    # 手势-人体空间匹配
+    # 手势-人体空间匹配 (v0.11.x 移植: per-target 匹配 + 上半身约束)
 
-    def _match_gesture_to_person(self, gesture_msg):
+    def _match_gesture_targets(self, gesture_msg, upper_only=True):
+        """每个手势 target 独立匹配最近人体 (多人场景各投各票, 避免整帧单匹配抖动).
+
+        Pass 1: 手在人体 bbox 内; upper_only 时额外要求手位于 bbox 上半部
+                (bbox 顶部起 ratio 高度内) — 过滤人手自然下垂被模型误识别为手势.
+        Pass 2 (fallback): 伸臂场景 — 最近人体 (< _gesture_match_max_px px), 同样约束.
+        返回 {target_index: track_id}, 无匹配的 target 不出现在结果中."""
         if self._targets is None or gesture_msg is None:
-            return None
+            return {}
         body_map = {}
         for bt in self._targets.targets:
             if bt.type != 'person':
@@ -227,43 +251,49 @@ class PerceptionNode(Node):
             if r is not None:
                 body_map[bt.track_id] = r
         if not body_map:
-            return None
-        # Pass 1: 严格手在人体 bbox 内 — 找距离最近的人体 (非第一个匹配)
-        best_tid, best_dist = None, float('inf')
-        for gt in gesture_msg.targets:
-            for groi in gt.rois:
-                if groi.type != 'hand':
-                    continue
-                gx = groi.rect.x_offset + groi.rect.width / 2.0
-                gy = groi.rect.y_offset + groi.rect.height / 2.0
+            return {}
+
+        def _hand_centers(gt):
+            return [(groi.rect.x_offset + groi.rect.width / 2.0,
+                     groi.rect.y_offset + groi.rect.height / 2.0)
+                    for groi in gt.rois if groi.type == 'hand']
+
+        def _upper_ok(gy, brect):
+            # 手中心不得低于 bbox 顶部起 ratio 高度 (自然下垂/低位摆臂手 → 排除)
+            return gy <= brect.y_offset + brect.height * self._upper_body_ratio
+
+        matches = {}
+        for ti, gt in enumerate(gesture_msg.targets):
+            # Pass 1: 手在人体 bbox 内 — 最近人体
+            best_tid, best_dist = None, float('inf')
+            for (gx, gy) in _hand_centers(gt):
                 for tid, brect in body_map.items():
-                    if self._point_in_rect(gx, gy, brect):
-                        bx = brect.x_offset + brect.width / 2.0
-                        by = brect.y_offset + brect.height / 2.0
-                        d = ((gx - bx) ** 2 + (gy - by) ** 2) ** 0.5
-                        if d < best_dist:
-                            best_dist = d
-                            best_tid = tid
-        if best_tid is not None:
-            return best_tid
-        # Pass 2 (fallback): 伸臂场景 — 找最近人体 (< _gesture_match_max_px px)
-        best_id, best_dist = None, float('inf')
-        for gt in gesture_msg.targets:
-            for groi in gt.rois:
-                if groi.type != 'hand':
-                    continue
-                gx = groi.rect.x_offset + groi.rect.width / 2.0
-                gy = groi.rect.y_offset + groi.rect.height / 2.0
-                for tid, brect in body_map.items():
+                    if not self._point_in_rect(gx, gy, brect):
+                        continue
+                    if upper_only and not _upper_ok(gy, brect):
+                        continue
                     bx = brect.x_offset + brect.width / 2.0
                     by = brect.y_offset + brect.height / 2.0
                     d = ((gx - bx) ** 2 + (gy - by) ** 2) ** 0.5
                     if d < best_dist:
-                        best_dist = d
-                        best_id = tid
-        if best_dist < self._gesture_match_max_px:
-            return best_id
-        return None
+                        best_dist, best_tid = d, tid
+            if best_tid is not None:
+                matches[ti] = best_tid
+                continue
+            # Pass 2 (fallback): 伸臂场景 — 最近人体 (< _gesture_match_max_px px)
+            best_id, best_dist = None, float('inf')
+            for (gx, gy) in _hand_centers(gt):
+                for tid, brect in body_map.items():
+                    if upper_only and not _upper_ok(gy, brect):
+                        continue
+                    bx = brect.x_offset + brect.width / 2.0
+                    by = brect.y_offset + brect.height / 2.0
+                    d = ((gx - bx) ** 2 + (gy - by) ** 2) ** 0.5
+                    if d < best_dist:
+                        best_dist, best_id = d, tid
+            if best_dist < self._gesture_match_max_px:
+                matches[ti] = best_id
+        return matches
 
     # ═══════════════════════════════════════════════════════════════
     # 回调
@@ -343,9 +373,18 @@ class PerceptionNode(Node):
                 c = self._get_body_center(msg, self._locked_id)
                 if c:
                     self._last_known_cx, self._last_known_cy = c
+                # 视觉可见 → 记录 EKF 状态 (视觉丢失外推用)
+                ekf = self._fusion.get_ekf_state(self._locked_id)
+                if ekf:
+                    self._last_ekf = (ekf['x'], ekf['y'], ekf['vx'], ekf['vy'], now)
             else:
                 if self._lost_since == 0.0:
                     self._lost_since = now
+                # 视觉丢失 → 记录 EKF 状态用于外推 (lidar 融合最后一次)
+                if self._last_ekf is None or now - self._last_ekf[4] > 0.5:
+                    ekf = self._fusion.get_ekf_state(self._locked_id)
+                    if ekf:
+                        self._last_ekf = (ekf['x'], ekf['y'], ekf['vx'], ekf['vy'], now)
                 # HOLDING: 等待 _lost_reid_min_s 后才尝试 RE-ID,
                 # 防止单帧丢失即把锁切换到旁边的另一个人
                 if now - self._lost_since >= self._lost_reid_min_s:
@@ -363,6 +402,16 @@ class PerceptionNode(Node):
                         f'#{self._locked_id} 消失 >{self._lost_hold_s:.0f}s, 解除锁定')
                     self._locked_id = None
                     self._lost_since = 0.0
+                    # 自动重锁: 单人场景画面仍有行人 → 恢复跟随 (防遮挡解锁后卡死)
+                    if self._auto_relock_enabled and self._has_body(msg):
+                        bodies = [t for t in msg.targets
+                                  if t.type == 'person' and _find_body_roi(t) is not None]
+                        if len(bodies) == 1:
+                            new_id = bodies[0].track_id
+                            self.get_logger().info(
+                                f'AUTO RELOCK: single person #{new_id} (after lost)')
+                            self._locked_id = new_id
+                            self._lost_since = 0.0
 
     def gesture_cb(self, msg: PerceptionTargets):
         """滑动窗口手势投票: 时间窗口 + 多码并行 + 人物累积投票.
@@ -374,10 +423,10 @@ class PerceptionNode(Node):
         now = self.get_clock().now().nanoseconds / 1e9
         timeout_s = self._gesture_window_timeout_s
 
-        # 本帧手势→人体匹配 (每帧一次, 不重复算)
-        matched_person = self._match_gesture_to_person(msg) if msg.targets else None
+        # 本帧手势→人体匹配 (per-target: 每只手独立匹配, 多人场景各投各票)
+        matches = self._match_gesture_targets(msg, upper_only=self._upper_body_only)
 
-        for t in msg.targets:
+        for ti, t in enumerate(msg.targets):
             for attr in t.attributes:
                 try:
                     code = int(attr.value)
@@ -397,7 +446,7 @@ class PerceptionNode(Node):
                     continue
 
                 # 窗口条目: (code, score, timestamp, matched_person_id)
-                self._gesture_window.append((code, score, now, matched_person))
+                self._gesture_window.append((code, score, now, matches.get(ti)))
 
         # ── 时间过期: 移除超过 timeout_s 的条目 ──
         self._gesture_window = [
@@ -413,29 +462,39 @@ class PerceptionNode(Node):
         if self._gesture_window:
             for lock_code in self._lock_codes:
                 lock_entries = [e for e in self._gesture_window if e[0] == lock_code]
-                lock_hits = len(lock_entries)
-                if lock_hits >= self._VOTE_THRESHOLD:
+                # 有效票: 仅统计匹配到人的帧 (位置约束已过滤自然下垂手);
+                # 必须同一人连续有效票 ≥ 阈值 — 防走路摆臂时偶发 1-2 帧穿透位置检查即误锁
+                person_votes = [e[3] for e in lock_entries if e[3] is not None]
+                winner, winner_votes = (Counter(person_votes).most_common(1)[0]
+                                        if person_votes else (None, 0))
+                if winner_votes >= self._VOTE_THRESHOLD:
                     if now - self._gesture_ts >= self._ok_cooldown_s:
-                        # 多数票: 投票期间手势匹配到的人中, 取出现次数最多的
-                        person_votes = [e[3] for e in lock_entries if e[3] is not None]
-                        winner = Counter(person_votes).most_common(1)[0][0] if person_votes else None
                         self._gesture_window.clear()
                         self._gesture_ts = now
                         self.get_logger().info(
-                            f'GESTURE LOCK: code={lock_code} hits={lock_hits} '
+                            f'GESTURE LOCK: code={lock_code} '
+                            f'valid={winner_votes}/{len(lock_entries)} '
                             f'person_votes={dict(Counter(person_votes))} winner={winner}')
                         self._on_ok(now, winner)
                         return
 
             for unlock_code in self._unlock_codes:
-                unlock_entries = [e for e in self._gesture_window if e[0] == unlock_code]
+                unlock_entries = [e for e in self._gesture_window
+                                  if e[0] == unlock_code
+                                  and e[1] >= self._unlock_min_score]
+                # 解锁绑定被锁人: Palm 需匹配到当前被锁人 (防路人 Palm / 自然下垂手误解锁)
+                if self._unlock_require_locked and self._locked_id is not None:
+                    unlock_entries = [
+                        e for e in unlock_entries if e[3] == self._locked_id]
                 unlock_hits = len(unlock_entries)
-                if unlock_hits >= self._VOTE_THRESHOLD:
+                if unlock_hits >= self._unlock_vote_threshold:
                     if now - self._gesture_ts >= self._ok_cooldown_s:
                         self._gesture_window.clear()
                         self._gesture_ts = now
                         self.get_logger().info(
-                            f'GESTURE UNLOCK: code={unlock_code} hits={unlock_hits}')
+                            f'GESTURE UNLOCK: code={unlock_code} hits={unlock_hits} '
+                            f'(score>={self._unlock_min_score}, '
+                            f'locked_required={self._unlock_require_locked})')
                         self._on_palm(now)
                         return
 
@@ -723,6 +782,17 @@ class PerceptionNode(Node):
             ekf_vx = float(ekf_state['vx']) if ekf_state else 0.0
             self._locked_target_pub.publish(
                 Point(x=float(fd['dist']), y=float(fd.get('y', 0.0)), z=ekf_vx))
+        elif (self._locked_id is not None and self._lost_since > 0.0
+              and self._last_ekf is not None
+              and now - self._last_ekf[4] < self._ekf_hold_s):
+            # 视觉丢失外推 (人出相机 FOV/被遮挡, lidar 融合最后一次状态):
+            # 恒速外推位置 → 车继续转向追人直到重新入画 → 锁定保持
+            ex, ey, evx, evy, ets = self._last_ekf
+            dt = now - ets
+            self._locked_target_pub.publish(Point(
+                x=float(max(ex + evx * dt, 0.3)),
+                y=float(ey + evy * dt),
+                z=float(evx)))
         else:
             self._locked_target_pub.publish(Point(x=float('nan'), y=0.0, z=0.0))
 

@@ -115,11 +115,17 @@ def generate_launch_description():
                      'lock_codes': [11, 2],  # OK(11) + 👍(2) 并行锁定, ✌️ Victory=3 备用
                      'unlock_codes': [5],  # Palm
                      'gesture_min_score': 0.0,
+                     'unlock_min_score': 0.0,  # TROS score 恒为 0, 不可用作门槛 (防误触靠位置约束)
+                     'upper_body_only': True,  # 手势须在上半身
+                     'upper_body_ratio': 0.5,  # 手须在 bbox 顶部 50% 内 (摆臂低位被过滤)
+                     'unlock_require_locked': True,  # Palm 须匹配到被锁人
+                     'unlock_vote_threshold': 20,  # Palm 连续有效票 ≥20 (≈0.33s, 摆臂高位不够)
                      'gesture_match_max_px': 250.0,
                      'gesture_vote_threshold': 15,
                      'gesture_window_max': 30,
                      'lost_reid_min_s': 1.0,
-                     'reid_max_dist_px': 80.0}])
+                     'reid_max_dist_px': 80.0,
+                     'ekf_hold_s': 5.0}])  # 视觉丢失 EKF 外推窗口 (人出画保持跟随)
 
     # ── 10. 运动仲裁 (语音 + FOLLOW距离覆写) ──────────
     arbiter = Node(package='tracked_vehicle', executable='motion_arbiter',
