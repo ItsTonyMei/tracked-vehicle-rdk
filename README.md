@@ -153,7 +153,7 @@ tracked-vehicle-rdk/
 ├── launch/                           # 🚀 ROS2 launch 文件
 │   ├── stereo_vision.launch.py       #    ✅ 双目采集 + StereoNet 深度图 (独立实验,非主线)
 │   ├── motor_bridge.launch.py        #    ✅ X5↔STM32 串口桥接 (独立启动)
-│   └── person_follow.launch.py       #    ✅ 语音+手势人体跟随 (12 节点流水线)
+│   └── person_follow.launch.py       #    ✅ 语音+手势人体跟随 (15 节点流水线)
 │
 ├── src/tracked_vehicle/              # 🐍 ROS2 包 (v0.10.0)
 │   ├── setup.py                      #    ✅ colcon 构建配置

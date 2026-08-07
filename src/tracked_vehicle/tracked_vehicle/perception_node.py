@@ -17,11 +17,17 @@
 
 融合管线: 自适应聚类 -> 躯干几何过滤 -> 匈牙利角度匹配 -> EKF(x,y,vx,vy)
 
-手势锁定 (v0.10.0 滑动窗口 + 多码并行):
+手势锁定 (v0.12.0 增强版):
   /hobot_hand_gesture_detection 属性码 OK=11 + 👍=2 并行锁定, Palm=5 解锁
   (✌️ Victory=3 备用, 当前使用 👍=2 触发最稳定)
-  30帧窗口, ≥15命中触发, 容忍短暂掉帧; 置信度门控 (默认 0.0 即禁用)
-  空间匹配: 严格 hand-in-body-rect → fallback 最近人体 (250px)
+  时间窗口 (1.0s) 滑动投票: 同一人有效匹配票 ≥15 触发锁定 (防摆臂偶发穿透误锁)
+  空间匹配: per-target 独立匹配 (多人各投各票) + 上半身位置约束
+            (upper_body_ratio=0.5, 过滤人手自然下垂被误识别为手势)
+  Palm 解锁强化: 绑定被锁人 (unlock_require_locked) + 独立票阈值 20
+                 (TROS confidence 恒为 0, score 门槛不可用)
+  auto_relock: 目标丢失解锁后画面仍为单人 → 自动重锁 (多人不自动)
+  EKF 外推: 视觉丢失 (人出相机 FOV/被遮挡) 时用最后 EKF 状态恒速外推
+            /locked_target (ekf_hold_s=5s), 车继续追人直到重新入画
   自适应发现: 新出现手势码自动打印 GESTURE DISCOVERY 日志
   IDLE — 无锁定, OK/👍 手势触发锁定
   LOCKED — 已锁定, 另一人 OK/👍 则切换, Palm 则解除

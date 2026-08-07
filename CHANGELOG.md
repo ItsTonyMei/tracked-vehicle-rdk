@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] - 2026-08-07
+
+### Changed
+
+- **回退避障逻辑** — 控制逻辑回到避障前基线 (v0.10.1): 移除 v0.11.x 的全部避障功能
+  (三扇区分析 / 软停绕障 / 减速转向避让 / 侧向禁转 / 墙检测 / 急停阈值调整 / PD 衰减)。
+  原因: 实车测试中避障与跟随耦合引入蛇行/卡死/失控旋转等连锁问题, 绕障在墙角/贴脸等
+  场景无法可靠工作。回归 M8 场地实测通过的纯跟随行为。
+- **保留手势锁定增强** (从 v0.11.x 移植) — per-target 手势匹配 (多人各投各票)、
+  上半身位置约束 (upper_body_ratio=0.5, 防自然下垂手误报)、Palm 解锁强化
+  (绑定被锁人 + 独立票阈值 20)、锁定同一人有效票 ≥15、auto_relock 单人自动重锁、
+  EKF 外推保持跟随 (ekf_hold_s=5s, 人出相机 FOV 时车继续追)。
+
+### Note
+
+- v0.11.0 - v0.11.11 的避障相关历史已被回退 (git 历史改写), 该区间改动仅保留手势锁定部分。
+
 ## [0.10.1] - 2026-07-29
 
 ### Fixed
