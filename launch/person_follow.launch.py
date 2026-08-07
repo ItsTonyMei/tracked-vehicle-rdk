@@ -33,8 +33,9 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import Node, LifecycleNode
 from ament_index_python import get_package_share_directory
+import os
 
 
 def generate_launch_description():
@@ -144,10 +145,22 @@ def generate_launch_description():
                      'back_vel_floor': -0.15,
                      'k_ff_approach': 1.2}])
 
-    # ── 11. LiDAR ──────────────────────────────────────
-    lidar = IncludeLaunchDescription(PythonLaunchDescriptionSource([
-        get_package_share_directory('ydlidar_ros2_driver'),
-        '/launch/ydlidar_launch.py']))
+    # ── 11. LiDAR (直接定义 + respawn: 驱动 C++ 崩溃 (checksum/串口噪声)
+    #        后自动拉起, 否则 /scan 永久消失 → lidar 离线) ──
+    lidar = LifecycleNode(package='ydlidar_ros2_driver',
+                          executable='ydlidar_ros2_driver_node',
+                          name='ydlidar_ros2_driver_node',
+                          output='screen', emulate_tty=True,
+                          parameters=[os.path.join(
+                              get_package_share_directory('ydlidar_ros2_driver'),
+                              'params', 'ydlidar.yaml')],
+                          namespace='/',
+                          respawn=True, respawn_delay=3.0)
+    # laser 静态 TF (原 ydlidar_launch.py 定义, 直接定义时需一并保留)
+    laser_tf = Node(package='tf2_ros', executable='static_transform_publisher',
+                    name='static_tf_pub_laser',
+                    arguments=['0', '0', '0.02', '0', '0', '0', '1',
+                               'base_link', 'laser_frame'])
 
     # ── 12. Camera-LiDAR 外参 (静态 TF) ──────────────
     cam_tf = Node(package='tf2_ros', executable='static_transform_publisher',
@@ -158,5 +171,5 @@ def generate_launch_description():
         DeclareLaunchArgument('log_level', default_value='warn',
                               description='ROS2 log level: debug, info, warn, error, fatal'),
         shm, cam, jpeg, mono2d, hand_lmk, hand_gesture, body_track, bridge, perception, arbiter,
-        lidar, cam_tf,
+        lidar, laser_tf, cam_tf,
     ])
